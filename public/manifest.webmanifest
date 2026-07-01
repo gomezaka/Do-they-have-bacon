@@ -1,16 +1,23 @@
 {
-  "name": "Tribunesliter",
-  "short_name": "Tribunesliter",
-  "description": "Tribune- og hallvurderinger laget for folk som faktisk må sitte der.",
+  "name": "Do They Have Bacon?",
+  "short_name": "Bacon?",
+  "description": "A global hotel breakfast bacon tracker.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#F4F6F2",
-  "theme_color": "#0E6B4B",
+  "background_color": "#FFF8F0",
+  "theme_color": "#C0381C",
   "orientation": "portrait",
   "icons": [
     {
       "src": "/icon.svg",
       "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
       "type": "image/svg+xml",
       "purpose": "any maskable"
     }

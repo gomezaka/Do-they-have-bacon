@@ -1,6 +1,6 @@
 {
-  "name": "tribunesliter-app",
-  "version": "0.2.5",
+  "name": "do-they-have-bacon-netlify-pwa",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,11 +10,15 @@
     "check": "node scripts/check-source.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "latest",
+    "@aws-sdk/s3-request-presigner": "latest",
+    "@supabase/supabase-js": "latest",
     "@vitejs/plugin-react": "latest",
+    "leaflet": "latest",
     "vite": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "@supabase/supabase-js": "latest"
+    "react-leaflet": "latest"
   },
   "devDependencies": {
     "typescript": "latest"
