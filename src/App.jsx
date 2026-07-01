@@ -110,9 +110,12 @@ function formatDistance(km) {
 function useHotels(refreshKey) {
   const [hotels, setHotels] = useState([]);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+
     listHotelsWithReports()
       .then((data) => {
         if (active) {
@@ -122,20 +125,24 @@ function useHotels(refreshKey) {
       })
       .catch((error) => {
         if (active) setError(error.message || 'Could not load bacon data.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
+
     return () => {
       active = false;
     };
   }, [refreshKey]);
 
-  return { hotels, error };
+  return { hotels, error, loading };
 }
 
 function App() {
   const [screen, setScreen] = useState(screens.home);
   const [selectedHotelId, setSelectedHotelId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const { hotels, error } = useHotels(refreshKey);
+  const { hotels, error, loading } = useHotels(refreshKey);
 
   function go(next, hotelId) {
     setSelectedHotelId(hotelId || null);
@@ -153,7 +160,7 @@ function App() {
     <div className="app-shell">
       <main className="app-column">
         <section className="app-content">
-          {screen === screens.home && <Home hotels={hotels} error={error} go={go} />}
+          {screen === screens.home && <Home hotels={hotels} error={error} loading={loading} go={go} />}
           {screen === screens.search && <Search go={go} refresh={refresh} />}
           {screen === screens.add && <AddHotel go={go} refresh={refresh} />}
           {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
@@ -174,17 +181,22 @@ function App() {
   );
 }
 
-function Home({ hotels, error, go }) {
+function Home({ hotels, error, loading, go }) {
   const [userLocation, setUserLocation] = useState(null);
   const [locationStatus, setLocationStatus] = useState('idle');
   const [locationMessage, setLocationMessage] = useState('');
 
   const stats = useMemo(() => {
+    if (loading) return { reportCount: '...', percent: '...' };
+
     const reportCount = hotels.reduce((sum, hotel) => sum + hotel.reports.length, 0);
     const confirmed = hotels.filter((hotel) => calculateBaconStatus(hotel.reports).key === 'bacon_confirmed').length;
-    const percent = hotels.length ? Math.round((confirmed / hotels.length) * 100) : 68;
-    return { reportCount: reportCount || 12418, percent };
-  }, [hotels]);
+    const percent = hotels.length ? Math.round((confirmed / hotels.length) * 100) : 0;
+    return {
+      reportCount: reportCount.toLocaleString('en-US'),
+      percent: `${percent}%`
+    };
+  }, [hotels, loading]);
 
   const visible = useMemo(() => {
     if (!userLocation) return hotels.slice(0, 3).map((hotel) => ({ hotel, distanceKm: null }));
@@ -265,11 +277,11 @@ function Home({ hotels, error, go }) {
 
       <div className="stat-strip">
         <div className="stat-card">
-          <div className="stat-number">{stats.reportCount.toLocaleString('en-US')}</div>
+          <div className="stat-number">{stats.reportCount}</div>
           <div className="stat-label">breakfasts scouted</div>
         </div>
         <div className="stat-card">
-          <div className="stat-number accent">{stats.percent}%</div>
+          <div className="stat-number accent">{stats.percent}</div>
           <div className="stat-label">had the bacon</div>
         </div>
       </div>
@@ -290,7 +302,12 @@ function Home({ hotels, error, go }) {
       </div>
 
       <div className="tight-stack">
-        {visible.length ? visible.map(({ hotel, distanceKm }) => (
+        {loading ? (
+          <div className="notice">
+            <strong>Loading breakfast intel...</strong>
+            <p className="muted small">Fetching the latest hotel reports.</p>
+          </div>
+        ) : visible.length ? visible.map(({ hotel, distanceKm }) => (
           <HotelCard key={hotel.id} hotel={hotel} go={go} distanceKm={distanceKm} />
         )) : (
           <div className="notice">
