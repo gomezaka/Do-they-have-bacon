@@ -208,7 +208,23 @@ function HotelCard({ hotel, go }) {
 function Search({ go, refresh }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
-  const [message, setMessage] = useState('Search our bacon map first.');
+  const [message, setMessage] = useState('Loading hotels...');
+
+  useEffect(() => {
+    let active = true;
+    searchHotels('')
+      .then((data) => {
+        if (!active) return;
+        setResults(data);
+        setMessage(data.length ? `${data.length} hotels available` : 'No hotels found yet.');
+      })
+      .catch((error) => {
+        if (active) setMessage(error.message || 'Could not load hotels.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [refresh]);
 
   async function submit(event) {
     event.preventDefault();
@@ -550,31 +566,31 @@ function HotelDetail({ hotel, hotelId, go }) {
 }
 
 function BaconMap({ hotels, go }) {
-  const reportedHotels = hotels.filter((hotel) => hotel.reports.length > 0);
-  const center = reportedHotels[0] ? [reportedHotels[0].latitude, reportedHotels[0].longitude] : [59.9139, 10.7522];
+  const mappableHotels = hotels.filter((hotel) => Number.isFinite(hotel.latitude) && Number.isFinite(hotel.longitude));
+  const center = mappableHotels[0] ? [mappableHotels[0].latitude, mappableHotels[0].longitude] : [59.9139, 10.7522];
 
-  if (!reportedHotels.length) {
+  if (!mappableHotels.length) {
     return (
       <>
         <ContextHeader title="Bacon map" onBack={() => go(screens.home)} />
         <div className="notice">
-          <strong>No bacon reports on the map yet.</strong>
-          <p className="muted small">Add a hotel, report breakfast, and the first pin will appear.</p>
+          <strong>No hotels on the map yet.</strong>
+          <p className="muted small">Add a hotel with a map pin, and it will appear here.</p>
           <button className="button" onClick={() => go(screens.add)}>Add hotel manually</button>
         </div>
       </>
     );
   }
 
-  const first = reportedHotels[0];
+  const first = mappableHotels[0];
   const firstSummary = calculateBaconStatus(first.reports);
 
   return (
     <div className="map-screen">
       <div className="map-frame">
-        <MapContainer center={center} zoom={reportedHotels.length === 1 ? 13 : 3} scrollWheelZoom>
+        <MapContainer center={center} zoom={mappableHotels.length === 1 ? 13 : 5} scrollWheelZoom>
           <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          {reportedHotels.map((hotel) => {
+          {mappableHotels.map((hotel) => {
             const summary = calculateBaconStatus(hotel.reports);
             return (
               <Marker key={hotel.id} position={[hotel.latitude, hotel.longitude]} icon={makeIcon(summary)}>
@@ -590,9 +606,10 @@ function BaconMap({ hotels, go }) {
       </div>
 
       <div className="map-overlay-top">
-        <button className="map-search-pill" onClick={() => go(screens.search)}><span>⌕</span><span>Bacon map · reported hotels</span></button>
+        <button className="map-search-pill" onClick={() => go(screens.search)}><span>⌕</span><span>Bacon map · {mappableHotels.length} hotels</span></button>
         <div className="chips">
           <span className="map-chip active">🥓 Confirmed</span>
+          <span className="map-chip">🕵️ Unscouted</span>
           <span className="map-chip">⚠️ Contested</span>
           <span className="map-chip">🌵 No bacon</span>
         </div>

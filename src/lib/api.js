@@ -3,6 +3,7 @@ import { getScoutId } from './scout';
 
 const LOCAL_HOTELS = 'dthb.hotels.v1';
 const LOCAL_REPORTS = 'dthb.reports.v1';
+const PAGE_SIZE = 1000;
 
 function readLocal(key, fallback = []) {
   try {
@@ -51,29 +52,56 @@ export async function listHotelsWithReports() {
     return hotels.map((hotel) => normalizeHotel(hotel, reports.filter((report) => report.hotel_id === hotel.id)));
   }
 
-  const { data: hotels, error: hotelError } = await supabase
-    .from('hotels')
-    .select('id, name, address, city, country, latitude, longitude, created_at')
-    .is('merged_into_hotel_id', null)
-    .neq('verification_status', 'hidden')
-    .order('created_at', { ascending: false })
-    .limit(200);
+  const hotels = await fetchHotels();
+  const reports = await fetchReports();
+  const visibleHotelIds = new Set(hotels.map((hotel) => hotel.id));
+  const visibleReports = reports.filter((report) => visibleHotelIds.has(report.hotel_id));
 
-  if (hotelError) throw hotelError;
+  return hotels.map((hotel) =>
+    normalizeHotel(hotel, visibleReports.filter((report) => report.hotel_id === hotel.id).map(normalizeReport))
+  );
+}
 
-  const hotelIds = hotels.map((hotel) => hotel.id);
-  let reports = [];
-  if (hotelIds.length) {
+async function fetchHotels() {
+  const hotels = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('hotels')
+      .select('id, name, address, city, country, latitude, longitude, created_at')
+      .is('merged_into_hotel_id', null)
+      .neq('verification_status', 'hidden')
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) throw error;
+    hotels.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return hotels;
+}
+
+async function fetchReports() {
+  const reports = [];
+  let from = 0;
+
+  while (true) {
     const { data, error } = await supabase
       .from('bacon_reports')
       .select('id, hotel_id, status, observed_date, breakfast_context, note, photo_url, anonymous_scout_id, created_at')
-      .in('hotel_id', hotelIds)
-      .order('observed_date', { ascending: false });
+      .order('observed_date', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+
     if (error) throw error;
-    reports = data || [];
+    reports.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
   }
 
-  return hotels.map((hotel) => normalizeHotel(hotel, reports.filter((report) => report.hotel_id === hotel.id).map(normalizeReport)));
+  return reports;
 }
 
 export async function getHotelWithReports(id) {
