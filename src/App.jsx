@@ -37,6 +37,35 @@ function makeIcon(summary) {
   });
 }
 
+const GEOLOCATION_OPTIONS = {
+  enableHighAccuracy: false,
+  timeout: 8000,
+  maximumAge: 300000
+};
+
+function toRadians(value) {
+  return (value * Math.PI) / 180;
+}
+
+function distanceBetweenKm(pointA, pointB) {
+  const earthRadiusKm = 6371;
+  const latDelta = toRadians(pointB.latitude - pointA.latitude);
+  const lonDelta = toRadians(pointB.longitude - pointA.longitude);
+  const latA = toRadians(pointA.latitude);
+  const latB = toRadians(pointB.latitude);
+  const angle = Math.sin(latDelta / 2) ** 2
+    + Math.cos(latA) * Math.cos(latB) * Math.sin(lonDelta / 2) ** 2;
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(angle), Math.sqrt(1 - angle));
+}
+
+function formatDistance(km) {
+  if (!Number.isFinite(km)) return '';
+  if (km < 1) return `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m`;
+  if (km < 10) return `${km.toFixed(1)} km`;
+  return `${Math.round(km)} km`;
+}
+
 function useHotels(refreshKey) {
   const [hotels, setHotels] = useState([]);
   const [error, setError] = useState('');
@@ -105,6 +134,10 @@ function App() {
 }
 
 function Home({ hotels, error, go, refresh }) {
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState('idle');
+  const [locationMessage, setLocationMessage] = useState('');
+
   const stats = useMemo(() => {
     const reportCount = hotels.reduce((sum, hotel) => sum + hotel.reports.length, 0);
     const confirmed = hotels.filter((hotel) => calculateBaconStatus(hotel.reports).key === 'bacon_confirmed').length;
@@ -112,11 +145,92 @@ function Home({ hotels, error, go, refresh }) {
     return { reportCount: reportCount || 12418, percent };
   }, [hotels]);
 
-  const visible = hotels.slice(0, 3);
+  const visible = useMemo(() => {
+    if (!userLocation) return hotels.slice(0, 3).map((hotel) => ({ hotel, distanceKm: null }));
+
+    return hotels
+      .map((hotel) => {
+        const latitude = Number(hotel.latitude);
+        const longitude = Number(hotel.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+        return {
+          hotel,
+          distanceKm: distanceBetweenKm(userLocation, { latitude, longitude })
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, 3);
+  }, [hotels, userLocation]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!navigator.geolocation || !navigator.permissions) return () => {
+      active = false;
+    };
+
+    navigator.permissions.query({ name: 'geolocation' })
+      .then((permission) => {
+        if (!active || permission.state !== 'granted') return;
+
+        setLocationStatus('loading');
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            if (!active) return;
+            setUserLocation({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude
+            });
+            setLocationStatus('ready');
+            setLocationMessage('Showing hotels closest to you.');
+          },
+          () => {
+            if (!active) return;
+            setLocationStatus('idle');
+          },
+          GEOLOCATION_OPTIONS
+        );
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function loadDemo() {
     seedDemoData();
     refresh();
+  }
+
+  function useLocation() {
+    if (!navigator.geolocation) {
+      setLocationStatus('error');
+      setLocationMessage('Location is not available on this device.');
+      return;
+    }
+
+    setLocationStatus('loading');
+    setLocationMessage('Checking your location...');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        });
+        setLocationStatus('ready');
+        setLocationMessage('Showing hotels closest to you.');
+      },
+      (locationError) => {
+        setLocationStatus('error');
+        setLocationMessage(locationError.code === 1
+          ? 'Location permission was not allowed.'
+          : 'Could not get your location.');
+      },
+      GEOLOCATION_OPTIONS
+    );
   }
 
   return (
@@ -151,12 +265,22 @@ function Home({ hotels, error, go, refresh }) {
       {error && <div className="notice error">{error}</div>}
 
       <div className="section-row">
-        <h3>Near you</h3>
-        <button className="section-link" onClick={() => go(screens.search)}>See all</button>
+        <div className="section-title-group">
+          <h3>Near you</h3>
+          {locationMessage && <p>{locationMessage}</p>}
+        </div>
+        <div className="section-actions">
+          <button className="section-link" onClick={useLocation} disabled={locationStatus === 'loading'}>
+            {locationStatus === 'loading' ? 'Locating...' : (userLocation ? 'Refresh' : 'Use location')}
+          </button>
+          <button className="section-link" onClick={() => go(screens.search)}>See all</button>
+        </div>
       </div>
 
       <div className="tight-stack">
-        {visible.length ? visible.map((hotel) => <HotelCard key={hotel.id} hotel={hotel} go={go} />) : (
+        {visible.length ? visible.map(({ hotel, distanceKm }) => (
+          <HotelCard key={hotel.id} hotel={hotel} go={go} distanceKm={distanceKm} />
+        )) : (
           <div className="notice">
             <strong>Uncharted bacon territory.</strong>
             <p className="muted small">Add the first breakfast target yourself, or load demo data locally.</p>
@@ -191,14 +315,16 @@ function TopBrand({ go }) {
   );
 }
 
-function HotelCard({ hotel, go }) {
+function HotelCard({ hotel, go, distanceKm = null }) {
   const summary = calculateBaconStatus(hotel.reports);
+  const distance = formatDistance(distanceKm);
+
   return (
     <button className="card hotel-card" onClick={() => go(screens.detail, hotel.id)}>
       <span className="hotel-thumb">🏨</span>
       <span className="hotel-main">
         <span className="hotel-title">{hotel.name}</span>
-        <span className="hotel-meta">{hotel.city}, {hotel.country}</span>
+        <span className="hotel-meta">{hotel.city}, {hotel.country}{distance ? ` · ${distance}` : ''}</span>
         <span className={`status-badge ${summary.key}`}>{summary.emoji} {summary.label}</span>
       </span>
       <span className="chevron">›</span>
