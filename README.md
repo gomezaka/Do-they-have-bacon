@@ -1,188 +1,214 @@
-# Tribunesliter v2.5
+# Do They Have Bacon?
 
-Beta-/distribusjonsoppdatering. Denne versjonen krever ingen ny SQL-kjøring hvis du allerede kjører v2.3 eller nyere.
+> v0.11 fixes the v0.10 dependency conflict: Next.js is pinned to 15.5.18 for `@opennextjs/cloudflare@1.20.1`.
 
-Nytt i v2.5:
 
-- Ekte **Lagret**-visning i bunnmenyen med lokale favoritter per enhet.
-- Fungerende hjerteknapp på hallprofil for å lagre/fjerne anlegg.
-- Fungerende del-knapp med Web Share API, og clipboard-fallback.
-- Ny **Kart/Utforsk**-visning som grupperer anlegg per kommune og åpner kartlenker.
-- Installasjonspanel på profilskjermen med Android-/iPhone-instruks.
-- Netlify- og Vercel-oppsett for enkel PWA-publisering.
-- Beta-testplan, deploy-sjekkliste og mobilinstallasjonsguide i `docs/`.
+## v0.10 runtime fix
 
-# Tribunesliter — tribune- og hallapp
+Denne versjonen låser Next.js til 15.5.15 for Cloudflare Workers/OpenNext. v0.9 installerte `next: latest`, som hos deg ble Next.js 16.2.9. Worker-loggen viste `components.ComponentMod.handler is not a function`, som er en runtime-feil i Cloudflare/OpenNext-kjeden, ikke en Supabase- eller R2-nøkkelfeil.
 
-Mobilvennlig PWA bygget med Vite + React + Supabase.
+Etter utpakking av v0.10 i VSCode:
 
-Målet er at folk skal kunne:
-
-- lese seg opp på tribuneplasser, haller og utebaner
-- se Tribunesliter-score og fasiliteter
-- se pakkeliste for anlegget
-- legge inn vurderinger
-- foreslå nye haller/anlegg
-- moderere innsendinger før de vises offentlig
-
-## Nytt i v0.2.5
-
-- Lagrede haller/favoritter i egen bunnmenyvisning.
-- Utforsk/kartvisning per kommune.
-- Deling av hallprofil via mobilens delingsark eller clipboard.
-- PWA-installasjonspanel på profilskjermen.
-- Deploy-filer for Netlify og Vercel.
-
-## Tidligere i v0.2.3
-
-- Ekte modereringsflyt i appen
-- Godkjenn/avvis ventende vurderinger
-- Skjul allerede publiserte vurderinger
-- Godkjenn/avvis nye anleggsforslag
-- Rediger navn, kommune, adresse, type og ute/inne før anlegg publiseres
-- Strammere vurderingsskjema med egen fasilitetsrapport
-- Fasilitetsrapport lagres i `facility_reports` og kan brukes til offentlig hallprofil etter godkjenning
-- SQL-scriptet migrerer eldre v0.2/v0.2.1-tabeller trygt
-- Fikset tidligere løs/duplisert `with check`-linje i SQL
-
-## Filstruktur
-
-```text
-index.html
-package.json
-vite.config.js
-.env.example
-.gitignore
-netlify.toml
-vercel.json
-public/
-  icon.svg
-  manifest.webmanifest
-  sw.js
-src/
-  main.jsx
-  App.jsx
-  styles.css
-  lib/
-    api.js
-    demoData.js
-    supabase.js
-docs/
-  supabase-schema.sql
-  deploy-checklist.md
-  beta-testplan.md
-  mobil-installasjon.md
-scripts/
-  check-source.mjs
+```bash
+Ctrl + C
+rm -rf node_modules package-lock.json .next .open-next
+npm install
+npm run deploy
 ```
 
-## Kjør lokalt
+På Windows PowerShell bruker du heller:
 
-Installer avhengigheter:
+```powershell
+Ctrl + C
+Remove-Item -Recurse -Force node_modules, package-lock.json, .next, .open-next -ErrorAction SilentlyContinue
+npm install
+npm run deploy
+```
+
+Cloudflare secrets må fortsatt ligge i Worker-en:
+
+```bash
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put R2_ACCESS_KEY_ID
+npx wrangler secret put R2_SECRET_ACCESS_KEY
+```
+
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` må være ekte Supabase publishable/anon key, ikke placeholder.
+
+---
+
+# Do They Have Bacon?
+
+A mobile-first hotel breakfast bacon tracker. Users can search hotels, add hotels manually, report whether breakfast had bacon, attach photo evidence, and view reported hotels on a bacon map.
+
+## v0.9 Cloudflare-ready update
+
+This version keeps the anonymous-first app from v0.8, but adds the missing deploy layer for Cloudflare Workers.
+
+Added in v0.9:
+
+- Cloudflare Workers deploy setup with OpenNext
+- `wrangler.jsonc`
+- `open-next.config.ts`
+- `public/_headers`
+- `.dev.vars.example`
+- Cloudflare deploy scripts
+- `docs/DEPLOY_CLOUDFLARE.md`
+- `docs/DEPLOY_STATUS.md`
+
+The app still works locally with `npm run dev`, and production should be deployed as a **Cloudflare Worker**, not as a plain static export.
+
+## Start locally
 
 ```bash
 npm install
-```
-
-Start utviklingsserver:
-
-```bash
 npm run dev
 ```
 
-Åpne:
+Open:
 
 ```text
-http://localhost:5173
+http://localhost:3000
 ```
 
-## Koble til Supabase
+## Useful local test flow
 
-1. Opprett et nytt Supabase-prosjekt.
-2. Åpne SQL Editor.
-3. Kjør hele filen:
+1. Open `/tools`
+2. Click **Load demo data**
+3. Open `/` or `/map`
+4. Add a hotel manually
+5. Report bacon without signing in
+6. Attach a photo if R2 is configured
+7. Open the hotel detail screen
+
+## Environment files
+
+For local testing, create:
 
 ```text
-docs/supabase-schema.sql
+.env.local
 ```
 
-4. Kopier `.env.example` til `.env.local`.
-5. Fyll inn:
+in the same folder as `package.json`.
+
+For R2 testing, copy:
+
+```text
+.env.local.r2.example
+```
+
+rename the copy to:
+
+```text
+.env.local
+```
+
+and fill in the values locally.
+
+Do not commit `.env.local`.
+
+## Supabase mode
+
+When switching to Supabase mode, app users still do not need to sign in.
+
+Set:
 
 ```env
-VITE_SUPABASE_URL=https://din-prosjektref.supabase.co
-VITE_SUPABASE_ANON_KEY=din-public-anon-key
-VITE_APP_URL=http://localhost:5173
+NEXT_PUBLIC_DATA_MODE=supabase
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-6. Start appen på nytt:
-
-```bash
-npm run dev
-```
-
-## Første admin
-
-Logg inn én gang med e-post i appen, slik at Supabase oppretter en rad i `profiles`.
-
-Kjør deretter i Supabase SQL Editor:
-
-```sql
-select id, email from auth.users order by created_at desc;
-```
-
-Finn din bruker-ID og kjør:
-
-```sql
-update public.profiles
-set role = 'admin'
-where id = '<DIN-BRUKER-UUID>';
-```
-
-Etterpå logger du ut og inn igjen, eller oppdaterer siden. Profilen skal da vise rollen `admin`, og knappen **Åpne moderering** blir tilgjengelig.
-
-## Datamodell
-
-Alle kan lese godkjent innhold.
-
-Innloggede brukere kan sende inn:
-
-- `reviews` med `status = pending`
-- `facility_reports` med `status = pending`
-- `venue_requests` med `status = pending`
-
-Moderator/admin kan:
-
-- sette vurderinger til `approved`
-- avvise vurderinger med `rejected`
-- skjule publiserte vurderinger med `hidden`
-- godkjenne anleggsforslag og opprette offentlig hall i `venues`
-- avvise anleggsforslag
-
-## Bygg for publisering
-
-```bash
-npm run build
-```
-
-Resultatet havner i:
+If this is a fresh Supabase setup, run:
 
 ```text
-dist/
+supabase/schema.sql
+supabase/policies.sql
 ```
 
-Denne mappen kan hostes på Netlify, Vercel, Cloudflare Pages eller vanlig webhotell.
+If you already created the v0.7 database schema, run:
+
+```text
+supabase/migrations/20260630_v08_anonymous_scouts.sql
+```
+
+## Cloudflare deploy
+
+Read this file first:
+
+```text
+docs/DEPLOY_CLOUDFLARE.md
+```
+
+Short version:
+
+```bash
+npm install
+npx wrangler login
+npm run deploy
+```
+
+After deploy, add the Worker URL to R2 CORS.
+
+## Scripts
+
+```bash
+npm run dev          # local Next.js dev server
+npm run build        # standard Next.js build
+npm run preview      # build and preview in Cloudflare Workers runtime
+npm run deploy       # build and deploy to Cloudflare Workers
+npm run upload       # build and upload a Worker version
+npm run cf-typegen   # generate Cloudflare env types
+npm run typecheck
+npm run lint
+```
+
+## Notes
+
+- `R2_PUBLIC_URL` is the `pub-...r2.dev` URL or custom public media domain.
+- `R2_PUBLIC_URL` is not the S3 endpoint.
+- `R2_ACCOUNT_ID` is only the account ID, not the full endpoint URL.
+- Login is optional; the main app is anonymous-first.
+- The existing `<img>` warnings are intentional because the prototype avoids paid image optimization/CDN assumptions.
 
 
-## v0.2.3
+## v0.12 UI refresh
+This version removes the fake phone frame and simulated mobile status bar, and uses the newer full-screen mobile web layout from the latest design mockup.
 
-Denne versjonen gjør appen mer klar for ekte betatest:
 
-- bedre søk, kommune-/idrettsfilter og sortering
-- egen visning for å rapportere feil/oppdatert fasilitetsinfo
-- moderator kan godkjenne/avvise fasilitetsrapporter
-- godkjent fasilitetsrapport oppdaterer hallprofilen
-- hallprofil viser anleggsinfo, kartlenke og når fasilitetsdata sist ble bekreftet
-- vurderingsskjemaet inkluderer garderobe og dusj
+## v0.13 design pass
+Search, hotel details, report, map and You/Tools screens were polished to match the latest production-style mobile web design. The fake phone shell remains removed.
 
-Etter oppdatering må `docs/supabase-schema.sql` kjøres på nytt i Supabase, fordi `venue_public_cards` nå returnerer `facility_reported_at`.
+
+## v0.14 auth redirect fix
+Magic-link sign-in now uses the actual browser origin instead of relying on a build-time `NEXT_PUBLIC_APP_URL`. Configure Supabase Auth URL settings as described in `docs/AUTH_REDIRECTS.md`.
+
+
+## v0.15 public cleanup
+The public You page no longer shows Local bacon lab, R2 checks or internal data-mode tools. Developer tools have moved to `/dev` and are disabled unless `NEXT_PUBLIC_SHOW_DEV_TOOLS=true` is set.
+
+For production/Cloudflare deploy, keep:
+
+```env
+NEXT_PUBLIC_SHOW_DEV_TOOLS=false
+```
+
+
+## v0.16 auth callback build fix
+This version fixes the Next.js build failure on `/auth/callback` by wrapping the `useSearchParams()` usage in a `Suspense` boundary.
+
+
+## v0.17 Cloudflare dependency hotfix
+If deploy fails with `Cannot find package ... node_modules/gzip-size/index.js`, use this version. It adds `gzip-size@7.0.0` explicitly because OpenNext/Cloudflare's minify dependency chain can fail to resolve it on clean Windows installs.
+
+
+## v0.18 gzip-size compatibility fix
+
+If deploy fails with:
+
+```text
+SyntaxError: The requested module 'gzip-size' does not provide an export named 'default'
+```
+
+use v0.18 or newer. This pins `gzip-size` to `5.1.1`, which is compatible with the import style used in the Cloudflare/OpenNext minify dependency chain on this Windows setup.

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.18.0
+- Fixed Cloudflare/OpenNext deploy crash caused by gzip-size v7 not exporting a default value
+- Pinned gzip-size to 5.1.1 for CommonJS/default-import compatibility with @node-minify/utils
+- Kept v0.16 auth callback Suspense fix
+- Kept v0.15 public cleanup that hides Local bacon lab and R2 check from users
+
+## v0.17.0
+- Added explicit gzip-size dependency required by the Cloudflare/OpenNext minify chain on clean Windows installs
+- Added npm override for gzip-size to avoid missing transitive dependency during `npm run deploy`
+- Kept the v0.16 auth callback Suspense build fix
+
 ## v0.16.0
 - Fixed Cloudflare/Next build failure on /auth/callback
 - Wrapped useSearchParams in Suspense for Next 15 prerendering
