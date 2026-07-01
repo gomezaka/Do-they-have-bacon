@@ -110,14 +110,34 @@ export async function getHotelWithReports(id) {
 }
 
 export async function searchHotels(query) {
-  const normalized = query.trim().toLowerCase();
   const hotels = await listHotelsWithReports();
-  if (!normalized) return hotels.slice(0, 30);
+  return filterHotels(hotels, query);
+}
+
+export function filterHotels(hotels, query) {
+  const normalized = normalizeSearchText(query);
+  if (!normalized) return hotels;
+
   return hotels.filter((hotel) =>
     [hotel.name, hotel.city, hotel.country, hotel.address].filter(Boolean).some((value) =>
-      String(value).toLowerCase().includes(normalized)
+      normalizeSearchText(value).includes(normalized)
     )
   );
+}
+
+export function normalizeSearchText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/æ/g, 'ae')
+    .replace(/ø/g, 'o')
+    .replace(/å/g, 'a')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .replace(/ä/g, 'a')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
 }
 
 export async function createHotel(input) {

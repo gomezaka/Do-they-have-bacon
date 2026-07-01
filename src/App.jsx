@@ -5,6 +5,7 @@ import {
   clearLocalData,
   createHotel,
   createReport,
+  filterHotels,
   getHotelWithReports,
   listHotelsWithReports,
   searchHotels,
@@ -207,34 +208,42 @@ function HotelCard({ hotel, go }) {
 
 function Search({ go, refresh }) {
   const [query, setQuery] = useState('');
+  const [allHotels, setAllHotels] = useState([]);
   const [results, setResults] = useState([]);
   const [message, setMessage] = useState('Loading hotels...');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setMessage('Loading hotels...');
     searchHotels('')
       .then((data) => {
         if (!active) return;
-        setResults(data);
-        setMessage(data.length ? `${data.length} hotels available` : 'No hotels found yet.');
+        setAllHotels(data);
+        setLoading(false);
       })
       .catch((error) => {
-        if (active) setMessage(error.message || 'Could not load hotels.');
+        if (!active) return;
+        setMessage(error.message || 'Could not load hotels.');
+        setLoading(false);
       });
     return () => {
       active = false;
     };
   }, [refresh]);
 
-  async function submit(event) {
+  useEffect(() => {
+    if (loading) return;
+    const data = filterHotels(allHotels, query);
+    setResults(data);
+    setMessage(query.trim()
+      ? (data.length ? `${data.length} hotels found` : 'No hotels match your search.')
+      : (allHotels.length ? `${allHotels.length} hotels available` : 'No hotels found yet.'));
+  }, [allHotels, loading, query]);
+
+  function submit(event) {
     event.preventDefault();
-    try {
-      const data = await searchHotels(query);
-      setResults(data);
-      setMessage(data.length ? `${data.length} hotels found` : 'No scout reports found yet.');
-    } catch (error) {
-      setMessage(error.message || 'Search failed.');
-    }
   }
 
   return (
@@ -243,10 +252,10 @@ function Search({ go, refresh }) {
       <form className="tight-stack search-card" onSubmit={submit}>
         <label className="search-pill">
           <span>⌕</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any hotel…" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any hotel…" autoComplete="off" />
         </label>
         <div className="chips">
-          <button className="chip active">All</button>
+          <button className="chip active" type="button" onClick={() => setQuery('')}>All</button>
           <span className="chip">🥓 Confirmed</span>
           <span className="chip">⚠️ Contested</span>
           <span className="chip">🌵 No bacon</span>
