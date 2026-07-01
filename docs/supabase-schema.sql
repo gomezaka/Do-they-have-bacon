@@ -40,6 +40,26 @@ create table if not exists public.report_flags (
   created_at timestamptz not null default now()
 );
 
+-- Existing beta databases may already have these tables. `create table if not
+-- exists` will not add new columns, so keep this section idempotent.
+alter table public.hotels add column if not exists address text;
+alter table public.hotels add column if not exists source text not null default 'manual';
+alter table public.hotels add column if not exists external_id text;
+alter table public.hotels add column if not exists verification_status text not null default 'unverified';
+alter table public.hotels add column if not exists anonymous_scout_id text;
+alter table public.hotels add column if not exists merged_into_hotel_id uuid references public.hotels(id);
+alter table public.hotels add column if not exists updated_at timestamptz not null default now();
+
+alter table public.bacon_reports add column if not exists breakfast_context text not null default 'buffet';
+alter table public.bacon_reports add column if not exists note text;
+alter table public.bacon_reports add column if not exists photo_url text;
+alter table public.bacon_reports add column if not exists photo_status text not null default 'none';
+alter table public.bacon_reports add column if not exists anonymous_scout_id text;
+alter table public.bacon_reports add column if not exists flagged_count integer not null default 0;
+alter table public.bacon_reports add column if not exists updated_at timestamptz not null default now();
+
+alter table public.report_flags add column if not exists anonymous_scout_id text;
+
 alter table public.hotels enable row level security;
 alter table public.bacon_reports enable row level security;
 alter table public.report_flags enable row level security;
