@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Do They Have Bacon logo">
+  <rect width="256" height="256" rx="56" fill="#fff7ec"/>
+  <path d="M45 83c31-22 61 22 92 0s61 22 92 0v35c-31 22-61-22-92 0s-61-22-92 0z" fill="#a83218"/>
+  <path d="M45 135c31-22 61 22 92 0s61 22 92 0v35c-31 22-61-22-92 0s-61-22-92 0z" fill="#d86a43"/>
+  <path d="M62 94c24-10 47 17 72 4" stroke="#ffe0d2" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <path d="M74 147c24-10 47 17 72 4" stroke="#ffe0d2" stroke-width="12" stroke-linecap="round" fill="none"/>
+</svg>

@@ -1,0 +1,16 @@
+node_modules
+.vscode
+.next
+.open-next
+.wrangler
+out
+.env
+.env.local
+.env.*.local
+.dev.vars
+cloudflare-env.d.ts
+.DS_Store
+*.log
+.vercel
+.turbo
+tsconfig.tsbuildinfo

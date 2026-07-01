@@ -1,0 +1,2 @@
+-- Optional seed data for development after Supabase is connected.
+-- The local MVP does not use this file yet.
