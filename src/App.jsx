@@ -1,21 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from 'react-leaflet';
+import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import {
-  clearLocalData,
   createHotel,
   createReport,
   filterHotels,
   getHotelWithReports,
   listHotelsWithReports,
-  searchHotels,
-  seedDemoData
+  searchHotels
 } from './lib/api.js';
 import { calculateBaconStatus, formatDate, todayISO } from './lib/status.js';
 import { compressImage, blobToDataUrl } from './lib/image.js';
 import { uploadReportPhoto } from './lib/r2.js';
 import { getScoutId } from './lib/scout.js';
-import { hasSupabaseConfig } from './lib/supabase.js';
 
 const screens = {
   home: 'home',
@@ -37,11 +34,55 @@ function makeIcon(summary) {
   });
 }
 
+function makeUserLocationIcon() {
+  return L.divIcon({
+    html: '<span class="user-location-pin"><span></span></span>',
+    className: '',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    popupAnchor: [0, -12]
+  });
+}
+
 const GEOLOCATION_OPTIONS = {
   enableHighAccuracy: false,
   timeout: 8000,
   maximumAge: 300000
 };
+
+function toUserLocation(position) {
+  return {
+    latitude: Number(position.coords.latitude.toFixed(6)),
+    longitude: Number(position.coords.longitude.toFixed(6))
+  };
+}
+
+function getCurrentLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not available on this device.'));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(toUserLocation(position)),
+      reject,
+      GEOLOCATION_OPTIONS
+    );
+  });
+}
+
+async function getLocationIfAllowed() {
+  if (!navigator.geolocation || !navigator.permissions) return null;
+
+  try {
+    const permission = await navigator.permissions.query({ name: 'geolocation' });
+    if (permission.state !== 'granted') return null;
+    return await getCurrentLocation();
+  } catch {
+    return null;
+  }
+}
 
 function toRadians(value) {
   return (value * Math.PI) / 180;
@@ -112,13 +153,13 @@ function App() {
     <div className="app-shell">
       <main className="app-column">
         <section className="app-content">
-          {screen === screens.home && <Home hotels={hotels} error={error} go={go} refresh={refresh} />}
+          {screen === screens.home && <Home hotels={hotels} error={error} go={go} />}
           {screen === screens.search && <Search go={go} refresh={refresh} />}
           {screen === screens.add && <AddHotel go={go} refresh={refresh} />}
           {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
           {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
           {screen === screens.map && <BaconMap hotels={hotels} go={go} />}
-          {screen === screens.you && <You go={go} refresh={refresh} />}
+          {screen === screens.you && <You go={go} />}
         </section>
 
         <nav className="bottom-nav" aria-label="Main navigation">
@@ -133,7 +174,7 @@ function App() {
   );
 }
 
-function Home({ hotels, error, go, refresh }) {
+function Home({ hotels, error, go }) {
   const [userLocation, setUserLocation] = useState(null);
   const [locationStatus, setLocationStatus] = useState('idle');
   const [locationMessage, setLocationMessage] = useState('');
@@ -167,31 +208,12 @@ function Home({ hotels, error, go, refresh }) {
   useEffect(() => {
     let active = true;
 
-    if (!navigator.geolocation || !navigator.permissions) return () => {
-      active = false;
-    };
-
-    navigator.permissions.query({ name: 'geolocation' })
-      .then((permission) => {
-        if (!active || permission.state !== 'granted') return;
-
-        setLocationStatus('loading');
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            if (!active) return;
-            setUserLocation({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude
-            });
-            setLocationStatus('ready');
-            setLocationMessage('Showing hotels closest to you.');
-          },
-          () => {
-            if (!active) return;
-            setLocationStatus('idle');
-          },
-          GEOLOCATION_OPTIONS
-        );
+    getLocationIfAllowed()
+      .then((location) => {
+        if (!active || !location) return;
+        setUserLocation(location);
+        setLocationStatus('ready');
+        setLocationMessage('Showing hotels closest to you.');
       })
       .catch(() => {});
 
@@ -199,11 +221,6 @@ function Home({ hotels, error, go, refresh }) {
       active = false;
     };
   }, []);
-
-  function loadDemo() {
-    seedDemoData();
-    refresh();
-  }
 
   function useLocation() {
     if (!navigator.geolocation) {
@@ -214,23 +231,18 @@ function Home({ hotels, error, go, refresh }) {
 
     setLocationStatus('loading');
     setLocationMessage('Checking your location...');
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setUserLocation({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude
-        });
+    getCurrentLocation()
+      .then((location) => {
+        setUserLocation(location);
         setLocationStatus('ready');
         setLocationMessage('Showing hotels closest to you.');
-      },
-      (locationError) => {
+      })
+      .catch((locationError) => {
         setLocationStatus('error');
         setLocationMessage(locationError.code === 1
           ? 'Location permission was not allowed.'
           : 'Could not get your location.');
-      },
-      GEOLOCATION_OPTIONS
-    );
+      });
   }
 
   return (
@@ -283,9 +295,8 @@ function Home({ hotels, error, go, refresh }) {
         )) : (
           <div className="notice">
             <strong>Uncharted bacon territory.</strong>
-            <p className="muted small">Add the first breakfast target yourself, or load demo data locally.</p>
+            <p className="muted small">Add the first breakfast target yourself.</p>
             <div className="actions">
-              <button className="button secondary" onClick={loadDemo}>Load demo data</button>
               <button className="button" onClick={() => go(screens.add)}>Add hotel</button>
             </div>
           </div>
@@ -412,23 +423,57 @@ function AddHotel({ go, refresh }) {
   });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [locationStatus, setLocationStatus] = useState('idle');
+  const [locationMessage, setLocationMessage] = useState('');
 
   function update(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function useMyLocation() {
+  useEffect(() => {
+    let active = true;
+
+    getLocationIfAllowed()
+      .then((location) => {
+        if (!active || !location) return;
+        setForm((current) => ({
+          ...current,
+          latitude: location.latitude,
+          longitude: location.longitude
+        }));
+        setLocationStatus('ready');
+        setLocationMessage('Pin placed at your current location.');
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function useMyLocation() {
     if (!navigator.geolocation) {
       setError('Geolocation is not available on this device.');
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        update('latitude', Number(position.coords.latitude.toFixed(6)));
-        update('longitude', Number(position.coords.longitude.toFixed(6)));
-      },
-      () => setError('Could not get your location.')
-    );
+
+    setError('');
+    setLocationStatus('loading');
+    try {
+      const location = await getCurrentLocation();
+      setForm((current) => ({
+        ...current,
+        latitude: location.latitude,
+        longitude: location.longitude
+      }));
+      setLocationStatus('ready');
+      setLocationMessage('Pin placed at your current location.');
+    } catch (locationError) {
+      setLocationStatus('error');
+      setError(locationError.code === 1
+        ? 'Location permission was not allowed.'
+        : 'Could not get your location.');
+    }
   }
 
   async function submit(event) {
@@ -465,8 +510,10 @@ function AddHotel({ go, refresh }) {
 
         <div className="notice">
           <strong>Place the breakfast target</strong>
-          <p className="muted small">Use your location or tap the map to move the bacon pin.</p>
-          <button className="button secondary" type="button" onClick={useMyLocation}>Use my location</button>
+          <p className="muted small">{locationMessage || 'Tap the map to move the bacon pin.'}</p>
+          <button className="button secondary" type="button" onClick={useMyLocation} disabled={locationStatus === 'loading'}>
+            {locationStatus === 'loading' ? 'Locating...' : 'Use my location'}
+          </button>
         </div>
 
         <PinPicker lat={form.latitude} lng={form.longitude} onChange={(coords) => setForm((current) => ({ ...current, latitude: coords.lat, longitude: coords.lng }))} />
@@ -476,6 +523,19 @@ function AddHotel({ go, refresh }) {
       </form>
     </>
   );
+}
+
+function MapCenter({ center, zoom }) {
+  const map = useMap();
+  const lat = center[0];
+  const lng = center[1];
+
+  useEffect(() => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    map.setView([lat, lng], zoom, { animate: true });
+  }, [lat, lng, map, zoom]);
+
+  return null;
 }
 
 function PinPicker({ lat, lng, onChange }) {
@@ -492,6 +552,7 @@ function PinPicker({ lat, lng, onChange }) {
     <div className="pin-picker-frame">
       <MapContainer center={[lat, lng]} zoom={13} scrollWheelZoom>
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <MapCenter center={[lat, lng]} zoom={13} />
         <MapClicker />
         <Marker position={[lat, lng]} icon={makeIcon({ key: 'bacon_confirmed', emoji: '🥓' })} />
       </MapContainer>
@@ -702,29 +763,41 @@ function HotelDetail({ hotel, hotelId, go }) {
 
 function BaconMap({ hotels, go }) {
   const mappableHotels = hotels.filter((hotel) => Number.isFinite(hotel.latitude) && Number.isFinite(hotel.longitude));
-  const center = mappableHotels[0] ? [mappableHotels[0].latitude, mappableHotels[0].longitude] : [59.9139, 10.7522];
+  const [userLocation, setUserLocation] = useState(null);
 
-  if (!mappableHotels.length) {
-    return (
-      <>
-        <ContextHeader title="Bacon map" onBack={() => go(screens.home)} />
-        <div className="notice">
-          <strong>No hotels on the map yet.</strong>
-          <p className="muted small">Add a hotel with a map pin, and it will appear here.</p>
-          <button className="button" onClick={() => go(screens.add)}>Add hotel manually</button>
-        </div>
-      </>
-    );
-  }
+  useEffect(() => {
+    let active = true;
 
-  const first = mappableHotels[0];
-  const firstSummary = calculateBaconStatus(first.reports);
+    getLocationIfAllowed()
+      .then((location) => {
+        if (!active || !location) return;
+        setUserLocation(location);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const center = userLocation
+    ? [userLocation.latitude, userLocation.longitude]
+    : (mappableHotels[0] ? [mappableHotels[0].latitude, mappableHotels[0].longitude] : [59.9139, 10.7522]);
+  const zoom = (userLocation || mappableHotels.length === 1) ? 13 : 5;
+  const first = mappableHotels[0] || null;
+  const firstSummary = first ? calculateBaconStatus(first.reports) : null;
 
   return (
     <div className="map-screen">
       <div className="map-frame">
-        <MapContainer center={center} zoom={mappableHotels.length === 1 ? 13 : 5} scrollWheelZoom>
+        <MapContainer center={center} zoom={zoom} scrollWheelZoom>
           <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <MapCenter center={center} zoom={zoom} />
+          {userLocation && (
+            <Marker position={[userLocation.latitude, userLocation.longitude]} icon={makeUserLocationIcon()}>
+              <Popup>Your location</Popup>
+            </Marker>
+          )}
           {mappableHotels.map((hotel) => {
             const summary = calculateBaconStatus(hotel.reports);
             return (
@@ -750,27 +823,30 @@ function BaconMap({ hotels, go }) {
         </div>
       </div>
 
-      <button className="map-bottom-sheet" onClick={() => go(screens.detail, first.id)}>
-        <span className="hotel-thumb">🏨</span>
-        <span className="hotel-main">
-          <span className="hotel-title">{first.name}</span>
-          <span className={`status-badge ${firstSummary.key}`}>{firstSummary.emoji} {firstSummary.label}</span>
-        </span>
-        <span className="sheet-arrow">›</span>
-      </button>
+      {first ? (
+        <button className="map-bottom-sheet" onClick={() => go(screens.detail, first.id)}>
+          <span className="hotel-thumb">🏨</span>
+          <span className="hotel-main">
+            <span className="hotel-title">{first.name}</span>
+            <span className={`status-badge ${firstSummary.key}`}>{firstSummary.emoji} {firstSummary.label}</span>
+          </span>
+          <span className="sheet-arrow">›</span>
+        </button>
+      ) : (
+        <button className="map-bottom-sheet" onClick={() => go(screens.add)}>
+          <span className="hotel-thumb">+</span>
+          <span className="hotel-main">
+            <span className="hotel-title">No hotels on the map yet</span>
+            <span className="hotel-meta">Add the first breakfast target</span>
+          </span>
+          <span className="sheet-arrow">+</span>
+        </button>
+      )}
     </div>
   );
 }
 
-function You({ go, refresh }) {
-  const [message, setMessage] = useState('');
-
-  function resetLocal() {
-    clearLocalData();
-    refresh();
-    setMessage('Local demo data cleared on this device.');
-  }
-
+function You({ go }) {
   return (
     <>
       <ContextHeader title="You" onBack={() => go(screens.home)} />
@@ -789,11 +865,6 @@ function You({ go, refresh }) {
           <p className="hotel-meta">You can report bacon without an account. Install the app from your browser menu to keep it on your home screen.</p>
         </div>
 
-        <div className="profile-grid">
-          <div className="stat-card"><div className="stat-number">Beta</div><div className="stat-label">scout status</div></div>
-          <div className="stat-card"><div className="stat-number accent">{hasSupabaseConfig ? 'Live' : 'Local'}</div><div className="stat-label">data mode</div></div>
-        </div>
-
         <div className="notice">
           <strong>Scout ID</strong>
           <p className="muted small">{getScoutId()}</p>
@@ -808,9 +879,6 @@ function You({ go, refresh }) {
           <span className="add-manual-icon">⌖</span>
           <span><strong>Open bacon map</strong><br /><span className="muted small">See where scouts have already found evidence.</span></span>
         </button>
-
-        <button className="button ghost" onClick={resetLocal}>Clear local demo data</button>
-        {message && <p className="muted small">{message}</p>}
       </div>
     </>
   );

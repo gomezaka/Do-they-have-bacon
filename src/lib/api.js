@@ -17,6 +17,10 @@ function writeLocal(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function isDemoHotel(hotel) {
+  return hotel.source === 'demo' || String(hotel.id || '').startsWith('demo-');
+}
+
 function normalizeHotel(row, reports = []) {
   return {
     id: row.id,
@@ -47,9 +51,11 @@ function normalizeReport(row) {
 
 export async function listHotelsWithReports() {
   if (!hasSupabaseConfig) {
-    const hotels = readLocal(LOCAL_HOTELS);
+    const hotels = readLocal(LOCAL_HOTELS).filter((hotel) => !isDemoHotel(hotel));
     const reports = readLocal(LOCAL_REPORTS);
-    return hotels.map((hotel) => normalizeHotel(hotel, reports.filter((report) => report.hotel_id === hotel.id)));
+    const visibleHotelIds = new Set(hotels.map((hotel) => hotel.id));
+    const visibleReports = reports.filter((report) => visibleHotelIds.has(report.hotel_id));
+    return hotels.map((hotel) => normalizeHotel(hotel, visibleReports.filter((report) => report.hotel_id === hotel.id)));
   }
 
   const hotels = await fetchHotels();
@@ -209,25 +215,4 @@ export async function createReport(input) {
 
   if (error) throw error;
   return data;
-}
-
-export function clearLocalData() {
-  localStorage.removeItem(LOCAL_HOTELS);
-  localStorage.removeItem(LOCAL_REPORTS);
-}
-
-export function seedDemoData() {
-  const hotels = [
-    { id: 'demo-oslo', name: 'Scandic Oslo City', address: 'Europarådets plass', city: 'Oslo', country: 'Norway', latitude: 59.9127, longitude: 10.7519, source: 'demo', verification_status: 'unverified', created_at: new Date().toISOString() },
-    { id: 'demo-cph', name: 'Hotel Breakfast Copenhagen', address: 'Near the station', city: 'Copenhagen', country: 'Denmark', latitude: 55.6761, longitude: 12.5683, source: 'demo', verification_status: 'unverified', created_at: new Date().toISOString() },
-    { id: 'demo-berlin', name: 'Berlin Morning Hotel', address: 'Mitte', city: 'Berlin', country: 'Germany', latitude: 52.52, longitude: 13.405, source: 'demo', verification_status: 'unverified', created_at: new Date().toISOString() }
-  ];
-  const reports = [
-    { id: 'report-1', hotel_id: 'demo-oslo', status: 'yes', observed_date: new Date().toISOString().slice(0,10), breakfast_context: 'buffet', note: 'Crispy. Civilization survives.', photo_url: '', created_at: new Date().toISOString() },
-    { id: 'report-2', hotel_id: 'demo-cph', status: 'no', observed_date: new Date().toISOString().slice(0,10), breakfast_context: 'buffet', note: 'Only scrambled eggs and silence.', photo_url: '', created_at: new Date().toISOString() },
-    { id: 'report-3', hotel_id: 'demo-berlin', status: 'unsure', observed_date: new Date().toISOString().slice(0,10), breakfast_context: 'other', note: 'Suspicious breakfast matter.', photo_url: '', created_at: new Date().toISOString() }
-  ];
-  writeLocal(LOCAL_HOTELS, hotels);
-  writeLocal(LOCAL_REPORTS, reports);
-  return { hotels: hotels.length, reports: reports.length };
 }
