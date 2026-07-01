@@ -129,8 +129,7 @@ export async function createHotel(input) {
     latitude: Number(input.latitude),
     longitude: Number(input.longitude),
     source: input.source || 'manual',
-    verification_status: 'unverified',
-    anonymous_scout_id: getScoutId()
+    verification_status: 'unverified'
   };
 
   if (!payload.name || !payload.city || !payload.country) {
