@@ -1,0 +1,23 @@
+{
+  "files.exclude": {
+    "**/.mime_patch_state": true,
+    "**/_patch_backups": true,
+    "**/patch_logs": true,
+    "**/mime_agent_upload_*.zip": true,
+    "**/MiMe.zip": true
+  },
+  "search.exclude": {
+    "**/.mime_patch_state": true,
+    "**/_patch_backups": true,
+    "**/patch_logs": true,
+    "**/mime_agent_upload_*.zip": true,
+    "**/MiMe.zip": true
+  },
+  "files.watcherExclude": {
+    "**/.mime_patch_state/**": true,
+    "**/_patch_backups/**": true,
+    "**/patch_logs/**": true,
+    "**/mime_agent_upload_*.zip": true,
+    "**/MiMe.zip": true
+  }
+}
