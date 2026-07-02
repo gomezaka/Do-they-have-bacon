@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   createHotel,
   createReport,
   filterHotels,
   getHotelWithReports,
-  listHotelsWithReports
+  listHotelsWithReports,
+  normalizeSearchText
 } from './lib/api.js';
 import { calculateBaconStatus, formatDate, todayISO } from './lib/status.js';
 import { compressImage, blobToDataUrl } from './lib/image.js';
 import { uploadReportPhoto } from './lib/r2.js';
 import { getScoutId } from './lib/scout.js';
+
+const LazyBaconMap = lazy(() => import('./MapViews.jsx').then((module) => ({ default: module.BaconMap })));
+const LazyPinPicker = lazy(() => import('./MapViews.jsx').then((module) => ({ default: module.PinPicker })));
 
 const screens = {
   home: 'home',
@@ -37,26 +39,6 @@ function matchesStatusFilter(hotel, filterKey) {
   const statusKey = calculateBaconStatus(hotel.reports).key;
   if (filterKey === 'contested') return statusKey === 'contested' || statusKey === 'uncertain';
   return statusKey === filterKey;
-}
-
-function makeIcon(summary) {
-  return L.divIcon({
-    html: `<span class="map-pin ${summary.key}"><span>${summary.emoji}</span></span>`,
-    className: '',
-    iconSize: [38, 38],
-    iconAnchor: [19, 38],
-    popupAnchor: [0, -34]
-  });
-}
-
-function makeUserLocationIcon() {
-  return L.divIcon({
-    html: '<span class="user-location-pin"><span></span></span>',
-    className: '',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-    popupAnchor: [0, -12]
-  });
 }
 
 const GEOLOCATION_OPTIONS = {
@@ -194,10 +176,21 @@ function App() {
         <section className="app-content">
           {screen === screens.home && <Home hotels={hotels} error={error} loading={loading} go={go} />}
           {screen === screens.search && <Search hotels={hotels} error={error} loading={loading} go={go} />}
-          {screen === screens.add && <AddHotel go={go} refresh={refresh} />}
+          {screen === screens.add && <AddHotel hotels={hotels} go={go} refresh={refresh} />}
           {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
           {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
-          {screen === screens.map && <BaconMap hotels={hotels} go={go} />}
+          {screen === screens.map && (
+            <Suspense fallback={<MapLoading />}>
+              <LazyBaconMap
+                hotels={hotels}
+                go={go}
+                screens={screens}
+                statusFilters={statusFilters}
+                matchesStatusFilter={matchesStatusFilter}
+                getLocationIfAllowed={getLocationIfAllowed}
+              />
+            </Suspense>
+          )}
           {screen === screens.you && <You go={go} />}
         </section>
 
@@ -209,6 +202,14 @@ function App() {
           <button className={screen === screens.you ? 'nav-item active' : 'nav-item'} onClick={() => go(screens.you)}><span>◡</span><small>You</small></button>
         </nav>
       </main>
+    </div>
+  );
+}
+
+function MapLoading({ compact = false }) {
+  return (
+    <div className={compact ? 'pin-picker-frame map-loading' : 'map-screen map-loading'}>
+      Loading map...
     </div>
   );
 }
@@ -448,7 +449,25 @@ function Search({ hotels, error, loading, go }) {
   );
 }
 
-function AddHotel({ go, refresh }) {
+function findDuplicateHotel(hotels, form) {
+  const name = normalizeSearchText(form.name);
+  const city = normalizeSearchText(form.city);
+  const country = normalizeSearchText(form.country);
+  const address = normalizeSearchText(form.address);
+
+  if (!name || !city || !country) return null;
+
+  return hotels.find((hotel) => {
+    const existingAddress = normalizeSearchText(hotel.address);
+    const sameIdentity = normalizeSearchText(hotel.name) === name
+      && normalizeSearchText(hotel.city) === city
+      && normalizeSearchText(hotel.country) === country;
+    const sameOrUnknownAddress = !address || !existingAddress || existingAddress === address;
+    return sameIdentity && sameOrUnknownAddress;
+  }) || null;
+}
+
+function AddHotel({ hotels = [], go, refresh }) {
   const [form, setForm] = useState({
     name: '',
     city: '',
@@ -461,8 +480,10 @@ function AddHotel({ go, refresh }) {
   const [saving, setSaving] = useState(false);
   const [locationStatus, setLocationStatus] = useState('idle');
   const [locationMessage, setLocationMessage] = useState('');
+  const [duplicateHotel, setDuplicateHotel] = useState(null);
 
   function update(key, value) {
+    setDuplicateHotel(null);
     setForm((current) => ({ ...current, [key]: value }));
   }
 
@@ -514,8 +535,16 @@ function AddHotel({ go, refresh }) {
 
   async function submit(event) {
     event.preventDefault();
-    setSaving(true);
     setError('');
+    setDuplicateHotel(null);
+
+    const duplicate = findDuplicateHotel(hotels, form);
+    if (duplicate) {
+      setDuplicateHotel(duplicate);
+      return;
+    }
+
+    setSaving(true);
     try {
       const hotel = await createHotel(form);
       refresh();
@@ -544,6 +573,14 @@ function AddHotel({ go, refresh }) {
         </div>
         <Field label="Address, if known"><input className="input" value={form.address} onChange={(e) => update('address', e.target.value)} placeholder="Street, district, anything useful" /></Field>
 
+        {duplicateHotel && (
+          <div className="notice">
+            <strong>This hotel already exists.</strong>
+            <p className="muted small">{duplicateHotel.name}, {duplicateHotel.city}, {duplicateHotel.country}</p>
+            <button className="button secondary" type="button" onClick={() => go(screens.detail, duplicateHotel.id)}>Open existing hotel</button>
+          </div>
+        )}
+
         <div className="notice">
           <strong>Place the breakfast target</strong>
           <p className="muted small">{locationMessage || 'Tap the map to move the bacon pin.'}</p>
@@ -552,47 +589,14 @@ function AddHotel({ go, refresh }) {
           </button>
         </div>
 
-        <PinPicker lat={form.latitude} lng={form.longitude} onChange={(coords) => setForm((current) => ({ ...current, latitude: coords.lat, longitude: coords.lng }))} />
+        <Suspense fallback={<MapLoading compact />}>
+          <LazyPinPicker lat={form.latitude} lng={form.longitude} onChange={(coords) => setForm((current) => ({ ...current, latitude: coords.lat, longitude: coords.lng }))} />
+        </Suspense>
 
         {error && <p className="error">{error}</p>}
         <button className="button submit-wide" disabled={saving}>{saving ? 'Saving...' : 'Create hotel and report bacon'}</button>
       </form>
     </>
-  );
-}
-
-function MapCenter({ center, zoom }) {
-  const map = useMap();
-  const lat = center[0];
-  const lng = center[1];
-
-  useEffect(() => {
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    map.setView([lat, lng], zoom, { animate: true });
-  }, [lat, lng, map, zoom]);
-
-  return null;
-}
-
-function PinPicker({ lat, lng, onChange }) {
-  function MapClicker() {
-    useMapEvents({
-      click(event) {
-        onChange({ lat: Number(event.latlng.lat.toFixed(6)), lng: Number(event.latlng.lng.toFixed(6)) });
-      }
-    });
-    return null;
-  }
-
-  return (
-    <div className="pin-picker-frame">
-      <MapContainer center={[lat, lng]} zoom={13} scrollWheelZoom>
-        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <MapCenter center={[lat, lng]} zoom={13} />
-        <MapClicker />
-        <Marker position={[lat, lng]} icon={makeIcon({ key: 'bacon_confirmed', emoji: '🥓' })} />
-      </MapContainer>
-    </div>
   );
 }
 
@@ -794,100 +798,6 @@ function HotelDetail({ hotel, hotelId, go }) {
         )}
       </section>
     </>
-  );
-}
-
-function BaconMap({ hotels, go }) {
-  const mappableHotels = hotels.filter((hotel) => Number.isFinite(hotel.latitude) && Number.isFinite(hotel.longitude));
-  const [userLocation, setUserLocation] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');
-
-  useEffect(() => {
-    let active = true;
-
-    getLocationIfAllowed()
-      .then((location) => {
-        if (!active || !location) return;
-        setUserLocation(location);
-      })
-      .catch(() => {});
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const filteredHotels = mappableHotels.filter((hotel) => matchesStatusFilter(hotel, statusFilter));
-  const centerHotel = filteredHotels[0] || mappableHotels[0];
-  const center = userLocation
-    ? [userLocation.latitude, userLocation.longitude]
-    : (centerHotel ? [centerHotel.latitude, centerHotel.longitude] : [59.9139, 10.7522]);
-  const zoom = (userLocation || filteredHotels.length === 1) ? 13 : 5;
-  const first = filteredHotels[0] || null;
-  const firstSummary = first ? calculateBaconStatus(first.reports) : null;
-
-  return (
-    <div className="map-screen">
-      <div className="map-frame">
-        <MapContainer center={center} zoom={zoom} scrollWheelZoom>
-          <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <MapCenter center={center} zoom={zoom} />
-          {userLocation && (
-            <Marker position={[userLocation.latitude, userLocation.longitude]} icon={makeUserLocationIcon()}>
-              <Popup>Your location</Popup>
-            </Marker>
-          )}
-          {filteredHotels.map((hotel) => {
-            const summary = calculateBaconStatus(hotel.reports);
-            return (
-              <Marker key={hotel.id} position={[hotel.latitude, hotel.longitude]} icon={makeIcon(summary)}>
-                <Popup>
-                  <strong>{hotel.name}</strong>
-                  <p>{summary.label}</p>
-                  <button onClick={() => go(screens.detail, hotel.id)}>Open hotel</button>
-                </Popup>
-              </Marker>
-            );
-          })}
-        </MapContainer>
-      </div>
-
-      <div className="map-overlay-top">
-        <button className="map-search-pill" onClick={() => go(screens.search)}><span>⌕</span><span>Bacon map · {filteredHotels.length} of {mappableHotels.length} hotels</span></button>
-        <div className="chips">
-          {statusFilters.map((filter) => (
-            <button
-              className={statusFilter === filter.key ? 'map-chip active' : 'map-chip'}
-              key={filter.key}
-              type="button"
-              onClick={() => setStatusFilter(filter.key)}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {first ? (
-        <button className="map-bottom-sheet" onClick={() => go(screens.detail, first.id)}>
-          <span className="hotel-thumb">🏨</span>
-          <span className="hotel-main">
-            <span className="hotel-title">{first.name}</span>
-            <span className={`status-badge ${firstSummary.key}`}>{firstSummary.emoji} {firstSummary.label}</span>
-          </span>
-          <span className="sheet-arrow">›</span>
-        </button>
-      ) : (
-        <button className="map-bottom-sheet" onClick={() => go(screens.add)}>
-          <span className="hotel-thumb">+</span>
-          <span className="hotel-main">
-            <span className="hotel-title">{mappableHotels.length ? 'No hotels match this filter' : 'No hotels on the map yet'}</span>
-            <span className="hotel-meta">{mappableHotels.length ? 'Try another bacon status' : 'Add the first breakfast target'}</span>
-          </span>
-          <span className="sheet-arrow">+</span>
-        </button>
-      )}
-    </div>
   );
 }
 

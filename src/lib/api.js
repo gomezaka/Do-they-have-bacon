@@ -113,7 +113,7 @@ export function filterHotels(hotels, query) {
   );
 }
 
-function normalizeSearchText(value) {
+export function normalizeSearchText(value) {
   return String(value || '')
     .trim()
     .toLowerCase()
