@@ -90,12 +90,43 @@ on public.bacon_reports for insert
 with check (
   status in ('yes', 'no', 'unsure')
   and observed_date is not null
+  and observed_date <= current_date
+  and char_length(coalesce(note, '')) <= 500
+  and (
+    photo_url is null
+    or photo_url like 'https://pub-2e03acbe4ae14fbea6b571d7cd8425cb.r2.dev/%'
+  )
 );
 
 drop policy if exists "Anyone can flag reports" on public.report_flags;
 create policy "Anyone can flag reports"
 on public.report_flags for insert
-with check (reason is not null);
+with check (
+  reason is not null
+  and char_length(reason) <= 80
+);
+
+create or replace function public.increment_report_flag_count()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.bacon_reports
+  set flagged_count = flagged_count + 1,
+      updated_at = now()
+  where id = new.report_id;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists report_flags_increment_count on public.report_flags;
+create trigger report_flags_increment_count
+after insert on public.report_flags
+for each row
+execute function public.increment_report_flag_count();
 
 create index if not exists hotels_city_country_idx on public.hotels(city, country);
 create index if not exists bacon_reports_hotel_id_idx on public.bacon_reports(hotel_id);

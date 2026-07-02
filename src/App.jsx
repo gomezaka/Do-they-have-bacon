@@ -23,6 +23,22 @@ const screens = {
   you: 'you'
 };
 
+const statusFilters = [
+  { key: 'all', label: 'All' },
+  { key: 'bacon_confirmed', label: '🥓 Confirmed' },
+  { key: 'contested', label: '⚠️ Contested' },
+  { key: 'no_bacon_reported', label: '🌵 No bacon' },
+  { key: 'unscouted', label: '🕵️ Unscouted' }
+];
+
+function matchesStatusFilter(hotel, filterKey) {
+  if (filterKey === 'all') return true;
+
+  const statusKey = calculateBaconStatus(hotel.reports).key;
+  if (filterKey === 'contested') return statusKey === 'contested' || statusKey === 'uncertain';
+  return statusKey === filterKey;
+}
+
 function makeIcon(summary) {
   return L.divIcon({
     html: `<span class="map-pin ${summary.key}"><span>${summary.emoji}</span></span>`,
@@ -143,9 +159,26 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const { hotels, error, loading } = useHotels(refreshKey);
 
+  useEffect(() => {
+    if (!window.history.state?.screen) {
+      window.history.replaceState({ screen: screens.home, hotelId: null }, '');
+    }
+
+    function handlePopState(event) {
+      const state = event.state || { screen: screens.home, hotelId: null };
+      setSelectedHotelId(state.hotelId || null);
+      setScreen(state.screen || screens.home);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   function go(next, hotelId) {
     setSelectedHotelId(hotelId || null);
     setScreen(next);
+    window.history.pushState({ screen: next, hotelId: hotelId || null }, '');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -160,7 +193,7 @@ function App() {
       <main className="app-column">
         <section className="app-content">
           {screen === screens.home && <Home hotels={hotels} error={error} loading={loading} go={go} />}
-          {screen === screens.search && <Search go={go} refresh={refresh} />}
+          {screen === screens.search && <Search hotels={hotels} error={error} loading={loading} go={go} />}
           {screen === screens.add && <AddHotel go={go} refresh={refresh} />}
           {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
           {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
@@ -337,7 +370,7 @@ function TopBrand({ go }) {
           <div className="brand-sub">📍 Global bacon scouts</div>
         </div>
       </div>
-      <button className="round-icon" onClick={() => go(screens.you)} aria-label="Open profile">🔔</button>
+      <button className="round-icon" onClick={() => go(screens.you)} aria-label="Open profile">👤</button>
     </div>
   );
 }
@@ -359,41 +392,22 @@ function HotelCard({ hotel, go, distanceKm = null }) {
   );
 }
 
-function Search({ go, refresh }) {
+function Search({ hotels, error, loading, go }) {
   const [query, setQuery] = useState('');
-  const [allHotels, setAllHotels] = useState([]);
-  const [results, setResults] = useState([]);
-  const [message, setMessage] = useState('Loading hotels...');
-  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('all');
 
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setMessage('Loading hotels...');
-    listHotelsWithReports()
-      .then((data) => {
-        if (!active) return;
-        setAllHotels(data);
-        setLoading(false);
-      })
-      .catch((error) => {
-        if (!active) return;
-        setMessage(error.message || 'Could not load hotels.');
-        setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [refresh]);
+  const results = useMemo(() => (
+    filterHotels(hotels, query).filter((hotel) => matchesStatusFilter(hotel, statusFilter))
+  ), [hotels, query, statusFilter]);
 
-  useEffect(() => {
-    if (loading) return;
-    const data = filterHotels(allHotels, query);
-    setResults(data);
-    setMessage(query.trim()
-      ? (data.length ? `${data.length} hotels found` : 'No hotels match your search.')
-      : (allHotels.length ? `${allHotels.length} hotels available` : 'No hotels found yet.'));
-  }, [allHotels, loading, query]);
+  const message = useMemo(() => {
+    if (loading) return 'Loading hotels...';
+    if (error) return error;
+    if (query.trim() || statusFilter !== 'all') {
+      return results.length ? `${results.length} hotels found` : 'No hotels match your filters.';
+    }
+    return hotels.length ? `${hotels.length} hotels available` : 'No hotels found yet.';
+  }, [error, hotels.length, loading, query, results.length, statusFilter]);
 
   function submit(event) {
     event.preventDefault();
@@ -408,10 +422,16 @@ function Search({ go, refresh }) {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any hotel…" autoComplete="off" />
         </label>
         <div className="chips">
-          <button className="chip active" type="button" onClick={() => setQuery('')}>All</button>
-          <span className="chip">🥓 Confirmed</span>
-          <span className="chip">⚠️ Contested</span>
-          <span className="chip">🌵 No bacon</span>
+          {statusFilters.map((filter) => (
+            <button
+              className={statusFilter === filter.key ? 'chip active' : 'chip'}
+              key={filter.key}
+              type="button"
+              onClick={() => setStatusFilter(filter.key)}
+            >
+              {filter.label}
+            </button>
+          ))}
         </div>
       </form>
 
@@ -780,6 +800,7 @@ function HotelDetail({ hotel, hotelId, go }) {
 function BaconMap({ hotels, go }) {
   const mappableHotels = hotels.filter((hotel) => Number.isFinite(hotel.latitude) && Number.isFinite(hotel.longitude));
   const [userLocation, setUserLocation] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');
 
   useEffect(() => {
     let active = true;
@@ -796,11 +817,13 @@ function BaconMap({ hotels, go }) {
     };
   }, []);
 
+  const filteredHotels = mappableHotels.filter((hotel) => matchesStatusFilter(hotel, statusFilter));
+  const centerHotel = filteredHotels[0] || mappableHotels[0];
   const center = userLocation
     ? [userLocation.latitude, userLocation.longitude]
-    : (mappableHotels[0] ? [mappableHotels[0].latitude, mappableHotels[0].longitude] : [59.9139, 10.7522]);
-  const zoom = (userLocation || mappableHotels.length === 1) ? 13 : 5;
-  const first = mappableHotels[0] || null;
+    : (centerHotel ? [centerHotel.latitude, centerHotel.longitude] : [59.9139, 10.7522]);
+  const zoom = (userLocation || filteredHotels.length === 1) ? 13 : 5;
+  const first = filteredHotels[0] || null;
   const firstSummary = first ? calculateBaconStatus(first.reports) : null;
 
   return (
@@ -814,7 +837,7 @@ function BaconMap({ hotels, go }) {
               <Popup>Your location</Popup>
             </Marker>
           )}
-          {mappableHotels.map((hotel) => {
+          {filteredHotels.map((hotel) => {
             const summary = calculateBaconStatus(hotel.reports);
             return (
               <Marker key={hotel.id} position={[hotel.latitude, hotel.longitude]} icon={makeIcon(summary)}>
@@ -830,12 +853,18 @@ function BaconMap({ hotels, go }) {
       </div>
 
       <div className="map-overlay-top">
-        <button className="map-search-pill" onClick={() => go(screens.search)}><span>⌕</span><span>Bacon map · {mappableHotels.length} hotels</span></button>
+        <button className="map-search-pill" onClick={() => go(screens.search)}><span>⌕</span><span>Bacon map · {filteredHotels.length} of {mappableHotels.length} hotels</span></button>
         <div className="chips">
-          <span className="map-chip active">🥓 Confirmed</span>
-          <span className="map-chip">🕵️ Unscouted</span>
-          <span className="map-chip">⚠️ Contested</span>
-          <span className="map-chip">🌵 No bacon</span>
+          {statusFilters.map((filter) => (
+            <button
+              className={statusFilter === filter.key ? 'map-chip active' : 'map-chip'}
+              key={filter.key}
+              type="button"
+              onClick={() => setStatusFilter(filter.key)}
+            >
+              {filter.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -852,8 +881,8 @@ function BaconMap({ hotels, go }) {
         <button className="map-bottom-sheet" onClick={() => go(screens.add)}>
           <span className="hotel-thumb">+</span>
           <span className="hotel-main">
-            <span className="hotel-title">No hotels on the map yet</span>
-            <span className="hotel-meta">Add the first breakfast target</span>
+            <span className="hotel-title">{mappableHotels.length ? 'No hotels match this filter' : 'No hotels on the map yet'}</span>
+            <span className="hotel-meta">{mappableHotels.length ? 'Try another bacon status' : 'Add the first breakfast target'}</span>
           </span>
           <span className="sheet-arrow">+</span>
         </button>

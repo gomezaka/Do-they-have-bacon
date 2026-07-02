@@ -2,6 +2,27 @@ import { isSupabaseConfigured, supabase } from './supabase';
 import { getScoutId } from './scout';
 
 const PAGE_SIZE = 1000;
+const HOTEL_WITH_REPORTS_SELECT = `
+  id,
+  name,
+  address,
+  city,
+  country,
+  latitude,
+  longitude,
+  created_at,
+  bacon_reports (
+    id,
+    hotel_id,
+    status,
+    observed_date,
+    breakfast_context,
+    note,
+    photo_url,
+    anonymous_scout_id,
+    created_at
+  )
+`;
 
 function requireSupabase() {
   if (!isSupabaseConfigured || !supabase) {
@@ -20,7 +41,7 @@ function normalizeHotel(row, reports = []) {
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     created_at: row.created_at,
-    reports
+    reports: reports.map(normalizeReport).sort((a, b) => String(b.observed_date || b.created_at).localeCompare(String(a.observed_date || a.created_at)))
   };
 }
 
@@ -40,13 +61,7 @@ function normalizeReport(row) {
 
 export async function listHotelsWithReports() {
   const hotels = await fetchHotels();
-  const reports = await fetchReports();
-  const visibleHotelIds = new Set(hotels.map((hotel) => hotel.id));
-  const visibleReports = reports.filter((report) => visibleHotelIds.has(report.hotel_id));
-
-  return hotels.map((hotel) =>
-    normalizeHotel(hotel, visibleReports.filter((report) => report.hotel_id === hotel.id).map(normalizeReport))
-  );
+  return hotels.map((hotel) => normalizeHotel(hotel, hotel.bacon_reports || []));
 }
 
 async function fetchHotels() {
@@ -57,7 +72,7 @@ async function fetchHotels() {
   while (true) {
     const { data, error } = await client
       .from('hotels')
-      .select('id, name, address, city, country, latitude, longitude, created_at')
+      .select(HOTEL_WITH_REPORTS_SELECT)
       .is('merged_into_hotel_id', null)
       .neq('verification_status', 'hidden')
       .order('created_at', { ascending: false })
@@ -72,30 +87,19 @@ async function fetchHotels() {
   return hotels;
 }
 
-async function fetchReports() {
-  const client = requireSupabase();
-  const reports = [];
-  let from = 0;
-
-  while (true) {
-    const { data, error } = await client
-      .from('bacon_reports')
-      .select('id, hotel_id, status, observed_date, breakfast_context, note, photo_url, anonymous_scout_id, created_at')
-      .order('observed_date', { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (error) throw error;
-    reports.push(...(data || []));
-    if (!data || data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-
-  return reports;
-}
-
 export async function getHotelWithReports(id) {
-  const hotels = await listHotelsWithReports();
-  return hotels.find((hotel) => hotel.id === id) || null;
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('hotels')
+    .select(HOTEL_WITH_REPORTS_SELECT)
+    .eq('id', id)
+    .is('merged_into_hotel_id', null)
+    .neq('verification_status', 'hidden')
+    .single();
+
+  if (error?.code === 'PGRST116') return null;
+  if (error) throw error;
+  return data ? normalizeHotel(data, data.bacon_reports || []) : null;
 }
 
 export function filterHotels(hotels, query) {

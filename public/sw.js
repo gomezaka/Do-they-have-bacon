@@ -1,4 +1,4 @@
-const CACHE_NAME = 'do-they-have-bacon-app-shell-v1';
+const CACHE_NAME = 'do-they-have-bacon-app-shell-v2';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.svg'];
 
 self.addEventListener('install', (event) => {
@@ -18,8 +18,20 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/.netlify/functions/')) return;
+
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request).then((cached) => cached || caches.match('/')))
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(event.request);
+      const network = fetch(event.request)
+        .then((response) => {
+          if (response.ok) cache.put(event.request, response.clone());
+          return response;
+        })
+        .catch(() => cached || cache.match('/'));
+
+      return cached || network;
+    })
   );
 });

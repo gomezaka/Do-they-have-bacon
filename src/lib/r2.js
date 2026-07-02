@@ -4,7 +4,10 @@ export async function uploadReportPhoto(blob) {
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ contentType: blob.type || 'image/jpeg' })
+    body: JSON.stringify({
+      contentLength: blob.size,
+      contentType: blob.type || 'image/jpeg'
+    })
   });
 
   if (!response.ok) {

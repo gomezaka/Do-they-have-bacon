@@ -51,6 +51,7 @@ VITE_SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
 
 VITE_R2_PUBLIC_URL=https://pub-2e03acbe4ae14fbea6b571d7cd8425cb.r2.dev
 
+R2_UPLOAD_ALLOWED_ORIGINS=http://localhost:5173
 R2_ACCOUNT_ID=5f44dac9f8c098cf64000b4f4a80efe4
 R2_ACCESS_KEY_ID=your_r2_access_key
 R2_SECRET_ACCESS_KEY=your_r2_secret_key
@@ -58,6 +59,7 @@ R2_BUCKET_NAME=do-they-have-bacon
 ```
 
 `VITE_` variables are visible in the frontend. R2 secret values are used only by the Netlify Function.
+Do not add a Supabase service role key to this app; the frontend only needs the anon/publishable key and RLS policies.
 
 ## Supabase
 
