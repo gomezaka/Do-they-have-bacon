@@ -10,5 +10,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+coordinate-backups/
 .vscode/
 .idea/

@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "moderator": "node scripts/moderator-server.mjs --open",
+    "moderator:server": "node scripts/moderator-server.mjs",
+    "coordinates:dry-run": "node scripts/fix-coordinates.mjs",
+    "coordinates:fix": "node scripts/fix-coordinates.mjs --apply",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node scripts/check-source.mjs"

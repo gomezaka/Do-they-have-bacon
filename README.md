@@ -27,6 +27,68 @@ Open:
 http://localhost:5173
 ```
 
+## Local moderator app
+
+The public app does not link to moderation tools. To remove incorrectly added
+hotels or correct map pins from this workspace, double-click:
+
+```text
+start-moderator.cmd
+```
+
+or run:
+
+```bash
+npm run moderator
+```
+
+The browser opens automatically. If it does not, open:
+
+```text
+http://127.0.0.1:8789
+```
+
+The moderator app runs only on your machine and uses the server-side
+`SUPABASE_SERVICE_ROLE_KEY` from `.env.local`. Keep that key without a `VITE_`
+prefix so it is never exposed to the browser app.
+
+### Bulk coordinate repair
+
+If many map pins are wrong, preview automatic geocoding fixes with:
+
+```text
+preview-coordinate-fixes.cmd
+```
+
+or:
+
+```bash
+npm run coordinates:dry-run -- --limit 10
+```
+
+Apply accepted fixes to all visible hotels with:
+
+```text
+apply-coordinate-fixes.cmd
+```
+
+or:
+
+```bash
+npm run coordinates:fix
+```
+
+The repair script geocodes from hotel name, address, city and country, updates
+only matches above a confidence threshold, waits between lookups, and writes a
+JSON backup to `coordinate-backups/` before changing Supabase.
+
+The default confidence threshold is `0.85`. You can lower it for a targeted
+manual run, for example:
+
+```bash
+npm run coordinates:dry-run -- --query Sarpsborg --min-confidence 0.7
+```
+
 ## Environment variables
 
 Copy:
@@ -48,6 +110,7 @@ VITE_APP_URL=http://localhost:5173
 
 VITE_SUPABASE_URL=https://qivsimkychjsknuhhfff.supabase.co
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
 VITE_R2_PUBLIC_URL=https://pub-2e03acbe4ae14fbea6b571d7cd8425cb.r2.dev
 
