@@ -40,7 +40,7 @@ create table if not exists public.report_flags (
   created_at timestamptz not null default now()
 );
 
--- Existing beta databases may already have these tables. `create table if not
+-- Existing databases may already have these tables. `create table if not
 -- exists` will not add new columns, so keep this section idempotent.
 alter table public.hotels add column if not exists address text;
 alter table public.hotels add column if not exists source text not null default 'manual';

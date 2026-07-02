@@ -15,12 +15,9 @@
     "@supabase/supabase-js": "latest",
     "@vitejs/plugin-react": "latest",
     "leaflet": "latest",
-    "vite": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "react-leaflet": "latest"
-  },
-  "devDependencies": {
-    "typescript": "latest"
+    "react-leaflet": "latest",
+    "vite": "latest"
   }
 }

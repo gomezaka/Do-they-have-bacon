@@ -1,24 +1,13 @@
-import { hasSupabaseConfig, supabase } from './supabase';
+import { isSupabaseConfigured, supabase } from './supabase';
 import { getScoutId } from './scout';
 
-const LOCAL_HOTELS = 'dthb.hotels.v1';
-const LOCAL_REPORTS = 'dthb.reports.v1';
 const PAGE_SIZE = 1000;
 
-function readLocal(key, fallback = []) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback;
-  } catch {
-    return fallback;
+function requireSupabase() {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   }
-}
-
-function writeLocal(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-function isDemoHotel(hotel) {
-  return hotel.source === 'demo' || String(hotel.id || '').startsWith('demo-');
+  return supabase;
 }
 
 function normalizeHotel(row, reports = []) {
@@ -50,14 +39,6 @@ function normalizeReport(row) {
 }
 
 export async function listHotelsWithReports() {
-  if (!hasSupabaseConfig) {
-    const hotels = readLocal(LOCAL_HOTELS).filter((hotel) => !isDemoHotel(hotel));
-    const reports = readLocal(LOCAL_REPORTS);
-    const visibleHotelIds = new Set(hotels.map((hotel) => hotel.id));
-    const visibleReports = reports.filter((report) => visibleHotelIds.has(report.hotel_id));
-    return hotels.map((hotel) => normalizeHotel(hotel, visibleReports.filter((report) => report.hotel_id === hotel.id)));
-  }
-
   const hotels = await fetchHotels();
   const reports = await fetchReports();
   const visibleHotelIds = new Set(hotels.map((hotel) => hotel.id));
@@ -69,11 +50,12 @@ export async function listHotelsWithReports() {
 }
 
 async function fetchHotels() {
+  const client = requireSupabase();
   const hotels = [];
   let from = 0;
 
   while (true) {
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from('hotels')
       .select('id, name, address, city, country, latitude, longitude, created_at')
       .is('merged_into_hotel_id', null)
@@ -91,11 +73,12 @@ async function fetchHotels() {
 }
 
 async function fetchReports() {
+  const client = requireSupabase();
   const reports = [];
   let from = 0;
 
   while (true) {
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from('bacon_reports')
       .select('id, hotel_id, status, observed_date, breakfast_context, note, photo_url, anonymous_scout_id, created_at')
       .order('observed_date', { ascending: false })
@@ -115,11 +98,6 @@ export async function getHotelWithReports(id) {
   return hotels.find((hotel) => hotel.id === id) || null;
 }
 
-export async function searchHotels(query) {
-  const hotels = await listHotelsWithReports();
-  return filterHotels(hotels, query);
-}
-
 export function filterHotels(hotels, query) {
   const normalized = normalizeSearchText(query);
   if (!normalized) return hotels;
@@ -131,7 +109,7 @@ export function filterHotels(hotels, query) {
   );
 }
 
-export function normalizeSearchText(value) {
+function normalizeSearchText(value) {
   return String(value || '')
     .trim()
     .toLowerCase()
@@ -147,6 +125,7 @@ export function normalizeSearchText(value) {
 }
 
 export async function createHotel(input) {
+  const client = requireSupabase();
   const payload = {
     name: input.name.trim(),
     address: input.address?.trim() || null,
@@ -166,15 +145,7 @@ export async function createHotel(input) {
     throw new Error('A valid map pin is required.');
   }
 
-  if (!hasSupabaseConfig) {
-    const hotels = readLocal(LOCAL_HOTELS);
-    const hotel = { ...payload, id: crypto.randomUUID(), created_at: new Date().toISOString() };
-    hotels.unshift(hotel);
-    writeLocal(LOCAL_HOTELS, hotels);
-    return hotel;
-  }
-
-  const { data, error } = await supabase
+  const { data, error } = await client
     .from('hotels')
     .insert(payload)
     .select()
@@ -185,6 +156,7 @@ export async function createHotel(input) {
 }
 
 export async function createReport(input) {
+  const client = requireSupabase();
   const payload = {
     hotel_id: input.hotelId,
     status: input.status,
@@ -199,15 +171,7 @@ export async function createReport(input) {
   if (!['yes', 'no', 'unsure'].includes(payload.status)) throw new Error('Invalid bacon status.');
   if (!payload.observed_date) throw new Error('Observation date is required.');
 
-  if (!hasSupabaseConfig) {
-    const reports = readLocal(LOCAL_REPORTS);
-    const report = { ...payload, id: crypto.randomUUID(), created_at: new Date().toISOString() };
-    reports.unshift(report);
-    writeLocal(LOCAL_REPORTS, reports);
-    return report;
-  }
-
-  const { data, error } = await supabase
+  const { data, error } = await client
     .from('bacon_reports')
     .insert(payload)
     .select()

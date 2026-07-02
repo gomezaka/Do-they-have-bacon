@@ -77,7 +77,7 @@ bacon_reports
 report_flags
 ```
 
-and public insert/read policies for anonymous beta reporting.
+and public insert/read policies for anonymous reporting.
 
 ## Netlify deploy
 

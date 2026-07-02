@@ -6,8 +6,7 @@ import {
   createReport,
   filterHotels,
   getHotelWithReports,
-  listHotelsWithReports,
-  searchHotels
+  listHotelsWithReports
 } from './lib/api.js';
 import { calculateBaconStatus, formatDate, todayISO } from './lib/status.js';
 import { compressImage, blobToDataUrl } from './lib/image.js';
@@ -371,7 +370,7 @@ function Search({ go, refresh }) {
     let active = true;
     setLoading(true);
     setMessage('Loading hotels...');
-    searchHotels('')
+    listHotelsWithReports()
       .then((data) => {
         if (!active) return;
         setAllHotels(data);
