@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createHotel,
   createReport,
@@ -103,6 +103,14 @@ function formatDistance(km) {
   if (km < 1) return `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m`;
   if (km < 10) return `${km.toFixed(1)} km`;
   return `${Math.round(km)} km`;
+}
+
+function moreCompleteHotel(hotel, override) {
+  if (!hotel) return override || null;
+  if (!override) return hotel;
+  const hotelReportCount = hotel.reports?.length || 0;
+  const overrideReportCount = override.reports?.length || 0;
+  return overrideReportCount >= hotelReportCount ? override : hotel;
 }
 
 function firstValue(...values) {
@@ -213,6 +221,7 @@ function useHotels(refreshKey) {
 function App() {
   const [screen, setScreen] = useState(screens.home);
   const [selectedHotelId, setSelectedHotelId] = useState(null);
+  const [hotelOverrides, setHotelOverrides] = useState({});
   const [refreshKey, setRefreshKey] = useState(0);
   const { hotels, error, loading } = useHotels(refreshKey);
 
@@ -243,7 +252,19 @@ function App() {
     setRefreshKey((value) => value + 1);
   }
 
-  const selectedHotel = selectedHotelId ? hotels.find((hotel) => hotel.id === selectedHotelId) : null;
+  const rememberHotel = useCallback((hotel) => {
+    if (!hotel?.id) return;
+    setHotelOverrides((current) => (
+      current[hotel.id] === hotel ? current : { ...current, [hotel.id]: hotel }
+    ));
+  }, []);
+
+  const selectedHotel = selectedHotelId
+    ? moreCompleteHotel(
+      hotels.find((hotel) => hotel.id === selectedHotelId),
+      hotelOverrides[selectedHotelId]
+    )
+    : null;
 
   return (
     <div className="app-shell">
@@ -252,8 +273,8 @@ function App() {
           {screen === screens.home && <Home hotels={hotels} error={error} loading={loading} go={go} />}
           {screen === screens.search && <Search hotels={hotels} error={error} loading={loading} go={go} />}
           {screen === screens.add && <AddHotel hotels={hotels} go={go} refresh={refresh} />}
-          {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
-          {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} />}
+          {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} rememberHotel={rememberHotel} />}
+          {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} rememberHotel={rememberHotel} />}
           {screen === screens.map && (
             <Suspense fallback={<MapLoading />}>
               <LazyBaconMap
@@ -789,7 +810,7 @@ function AddHotel({ hotels = [], go, refresh }) {
   );
 }
 
-function Report({ hotel, hotelId, go, refresh }) {
+function Report({ hotel, hotelId, go, refresh, rememberHotel }) {
   const [loadedHotel, setLoadedHotel] = useState(hotel);
   const [status, setStatus] = useState('yes');
   const [observedDate, setObservedDate] = useState(todayISO());
@@ -836,6 +857,8 @@ function Report({ hotel, hotelId, go, refresh }) {
         note,
         photoUrl
       });
+      const updatedHotel = await getHotelWithReports(loadedHotel.id);
+      if (updatedHotel) rememberHotel(updatedHotel);
       refresh();
       go(screens.detail, loadedHotel.id);
     } catch (error) {
@@ -917,13 +940,30 @@ function Choice({ active, emoji, title, text, onClick }) {
   );
 }
 
-function HotelDetail({ hotel, hotelId, go }) {
+function HotelDetail({ hotel, hotelId, go, rememberHotel }) {
   const [loadedHotel, setLoadedHotel] = useState(hotel);
 
   useEffect(() => {
-    if (loadedHotel || !hotelId) return;
-    getHotelWithReports(hotelId).then(setLoadedHotel).catch(() => {});
-  }, [hotelId, loadedHotel]);
+    if (hotel?.id !== hotelId) return;
+    setLoadedHotel((current) => moreCompleteHotel(current, hotel));
+  }, [hotel, hotelId]);
+
+  useEffect(() => {
+    if (!hotelId) return;
+    let active = true;
+
+    getHotelWithReports(hotelId)
+      .then((freshHotel) => {
+        if (!active || !freshHotel) return;
+        setLoadedHotel(freshHotel);
+        rememberHotel(freshHotel);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [hotelId, rememberHotel]);
 
   if (!loadedHotel) {
     return (
