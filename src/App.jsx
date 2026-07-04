@@ -47,6 +47,15 @@ const GEOLOCATION_OPTIONS = {
   maximumAge: 300000
 };
 const HOTEL_SEARCH_LIMIT = 6;
+const DEFAULT_HOTEL_FORM = {
+  name: '',
+  city: '',
+  country: '',
+  address: '',
+  latitude: 59.9139,
+  longitude: 10.7522,
+  source: 'manual'
+};
 
 function toUserLocation(position) {
   return {
@@ -163,6 +172,19 @@ function toHotelPlace(place) {
   };
 }
 
+function hotelFormFromPlace(current, place) {
+  return {
+    ...current,
+    name: place.name,
+    address: place.address,
+    city: place.city,
+    country: place.country,
+    latitude: place.latitude,
+    longitude: place.longitude,
+    source: 'osm'
+  };
+}
+
 async function searchHotelsOnMap(query) {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
@@ -222,6 +244,7 @@ function App() {
   const [screen, setScreen] = useState(screens.home);
   const [selectedHotelId, setSelectedHotelId] = useState(null);
   const [hotelOverrides, setHotelOverrides] = useState({});
+  const [pendingHotelPlace, setPendingHotelPlace] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const { hotels, error, loading } = useHotels(refreshKey);
 
@@ -241,7 +264,8 @@ function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  function go(next, hotelId) {
+  function go(next, hotelId, options = {}) {
+    setPendingHotelPlace(next === screens.add ? options.place || null : null);
     setSelectedHotelId(hotelId || null);
     setScreen(next);
     window.history.pushState({ screen: next, hotelId: hotelId || null }, '');
@@ -272,7 +296,7 @@ function App() {
         <section className="app-content">
           {screen === screens.home && <Home hotels={hotels} error={error} loading={loading} go={go} />}
           {screen === screens.search && <Search hotels={hotels} error={error} loading={loading} go={go} />}
-          {screen === screens.add && <AddHotel hotels={hotels} go={go} refresh={refresh} />}
+          {screen === screens.add && <AddHotel hotels={hotels} go={go} refresh={refresh} initialPlace={pendingHotelPlace} />}
           {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} rememberHotel={rememberHotel} />}
           {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} rememberHotel={rememberHotel} />}
           {screen === screens.map && (
@@ -492,19 +516,68 @@ function HotelCard({ hotel, go, distanceKm = null }) {
 function Search({ hotels, error, loading, go }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [mapResults, setMapResults] = useState([]);
+  const [mapSearchStatus, setMapSearchStatus] = useState('idle');
+  const [mapSearchError, setMapSearchError] = useState('');
+  const trimmedQuery = query.trim();
 
+  const localMatches = useMemo(() => filterHotels(hotels, query), [hotels, query]);
   const results = useMemo(() => (
-    filterHotels(hotels, query).filter((hotel) => matchesStatusFilter(hotel, statusFilter))
-  ), [hotels, query, statusFilter]);
+    localMatches.filter((hotel) => matchesStatusFilter(hotel, statusFilter))
+  ), [localMatches, statusFilter]);
+  const shouldSearchMap = trimmedQuery.length >= 3 && !loading && !error && localMatches.length === 0;
+
+  useEffect(() => {
+    let active = true;
+
+    if (!shouldSearchMap) {
+      setMapResults([]);
+      setMapSearchStatus('idle');
+      setMapSearchError('');
+      return () => {
+        active = false;
+      };
+    }
+
+    setMapSearchStatus('loading');
+    setMapSearchError('');
+    const timer = window.setTimeout(() => {
+      searchHotelsOnMap(trimmedQuery)
+        .then((places) => {
+          if (!active) return;
+          setMapResults(places);
+        })
+        .catch((searchError) => {
+          if (!active) return;
+          setMapResults([]);
+          setMapSearchError(searchError.message || 'Could not search the map right now.');
+        })
+        .finally(() => {
+          if (active) setMapSearchStatus('idle');
+        });
+    }, 450);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [shouldSearchMap, trimmedQuery]);
 
   const message = useMemo(() => {
     if (loading) return 'Loading hotels...';
     if (error) return error;
-    if (query.trim() || statusFilter !== 'all') {
+    if (trimmedQuery || statusFilter !== 'all') {
+      if (results.length) return `${results.length} hotels found`;
+      if (localMatches.length) return 'No hotels match this bacon filter.';
+      if (trimmedQuery.length > 0 && trimmedQuery.length < 3) return 'Keep typing to search the map too.';
+      if (shouldSearchMap && mapSearchStatus === 'loading') return 'No local match. Searching the map...';
+      if (shouldSearchMap && mapSearchError) return mapSearchError;
+      if (shouldSearchMap && mapResults.length) return `No local match. ${mapResults.length} places found on the map.`;
+      if (shouldSearchMap) return 'No local or map matches found.';
       return results.length ? `${results.length} hotels found` : 'No hotels match your filters.';
     }
     return hotels.length ? `${hotels.length} hotels available` : 'No hotels found yet.';
-  }, [error, hotels.length, loading, query, results.length, statusFilter]);
+  }, [error, hotels.length, loading, localMatches.length, mapResults.length, mapSearchError, mapSearchStatus, results.length, shouldSearchMap, statusFilter, trimmedQuery]);
 
   function submit(event) {
     event.preventDefault();
@@ -536,9 +609,28 @@ function Search({ hotels, error, loading, go }) {
 
       <div className="tight-stack">
         {results.map((hotel) => <HotelCard key={hotel.id} hotel={hotel} go={go} />)}
+        {shouldSearchMap && mapResults.length > 0 && (
+          <div className="place-results">
+            {mapResults.map((place) => (
+              <button
+                className="place-result-card"
+                key={place.id}
+                type="button"
+                onClick={() => go(screens.add, null, { place })}
+              >
+                <span className="place-result-icon">⌖</span>
+                <span className="hotel-main">
+                  <span className="hotel-title">{place.name}</span>
+                  <span className="hotel-meta">{place.displayName}</span>
+                </span>
+                <span className="chevron">›</span>
+              </button>
+            ))}
+          </div>
+        )}
         <button className="add-manual-card" onClick={() => go(screens.add)}>
           <span className="add-manual-icon">+</span>
-          <span><strong>Can't find it?</strong><br /><span className="muted small">Add the hotel manually</span></span>
+          <span><strong>Can't find it?</strong><br /><span className="muted small">Search on the map or add it manually</span></span>
         </button>
       </div>
     </>
@@ -563,16 +655,8 @@ function findDuplicateHotel(hotels, form) {
   }) || null;
 }
 
-function AddHotel({ hotels = [], go, refresh }) {
-  const [form, setForm] = useState({
-    name: '',
-    city: '',
-    country: '',
-    address: '',
-    latitude: 59.9139,
-    longitude: 10.7522,
-    source: 'manual'
-  });
+function AddHotel({ hotels = [], go, refresh, initialPlace = null }) {
+  const [form, setForm] = useState(DEFAULT_HOTEL_FORM);
   const [placeQuery, setPlaceQuery] = useState('');
   const [placeResults, setPlaceResults] = useState([]);
   const [placeSearchStatus, setPlaceSearchStatus] = useState('idle');
@@ -615,16 +699,7 @@ function AddHotel({ hotels = [], go, refresh }) {
   }
 
   function selectPlace(place) {
-    const nextForm = {
-      ...form,
-      name: place.name,
-      address: place.address,
-      city: place.city,
-      country: place.country,
-      latitude: place.latitude,
-      longitude: place.longitude,
-      source: 'osm'
-    };
+    const nextForm = hotelFormFromPlace(form, place);
 
     setForm(nextForm);
     setSelectedPlaceId(place.id);
@@ -637,7 +712,27 @@ function AddHotel({ hotels = [], go, refresh }) {
   }
 
   useEffect(() => {
+    if (!initialPlace || selectedPlaceId === initialPlace.id) return;
+
+    const nextForm = hotelFormFromPlace(DEFAULT_HOTEL_FORM, initialPlace);
+    setForm(nextForm);
+    setPlaceQuery(initialPlace.name);
+    setPlaceResults([initialPlace]);
+    setSelectedPlaceId(initialPlace.id);
+    setDuplicateHotel(findDuplicateHotel(hotels, nextForm));
+    setLocationStatus('ready');
+    setLocationMessage('Pin placed from the selected map result.');
+    setError(!nextForm.city || !nextForm.country
+      ? 'The map result is missing city or country. Add the missing detail below.'
+      : '');
+  }, [hotels, initialPlace, selectedPlaceId]);
+
+  useEffect(() => {
     let active = true;
+
+    if (initialPlace) return () => {
+      active = false;
+    };
 
     getLocationIfAllowed()
       .then((location) => {
@@ -655,7 +750,7 @@ function AddHotel({ hotels = [], go, refresh }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [initialPlace]);
 
   async function useMyLocation() {
     if (!navigator.geolocation) {
