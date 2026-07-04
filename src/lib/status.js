@@ -87,6 +87,7 @@ export function formatDate(value) {
   }
 }
 
-export function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+export function todayISO(date = new Date()) {
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 10);
 }

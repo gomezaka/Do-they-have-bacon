@@ -2,6 +2,8 @@ import { isSupabaseConfigured, supabase } from './supabase';
 import { getScoutId } from './scout';
 
 const PAGE_SIZE = 1000;
+const REPORT_NOTE_LIMIT = 500;
+const REPORT_PHOTO_URL_PATTERN = /^https:\/\/[a-z0-9.-]+\/reports\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]+\.(jpg|jpeg|png|webp)$/i;
 const HOTEL_WITH_REPORTS_SELECT = `
   id,
   name,
@@ -29,6 +31,19 @@ function requireSupabase() {
     throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   }
   return supabase;
+}
+
+function todayISO(date = new Date()) {
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 10);
+}
+
+function isValidISODate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+}
+
+function isRowLevelSecurityError(error) {
+  return error?.code === '42501' && /row-level security/i.test(error.message || '');
 }
 
 function normalizeHotel(row, reports = []) {
@@ -161,19 +176,28 @@ export async function createHotel(input) {
 
 export async function createReport(input) {
   const client = requireSupabase();
+  const note = input.note?.trim() || null;
+  const observedDate = input.observedDate;
+  const photoUrl = input.photoUrl || null;
   const payload = {
     hotel_id: input.hotelId,
     status: input.status,
-    observed_date: input.observedDate,
+    observed_date: observedDate,
     breakfast_context: input.breakfastContext || 'buffet',
-    note: input.note?.trim() || null,
-    photo_url: input.photoUrl || null,
-    photo_status: input.photoUrl ? 'uploaded' : 'none',
+    note,
+    photo_url: photoUrl,
+    photo_status: photoUrl ? 'uploaded' : 'none',
     anonymous_scout_id: getScoutId()
   };
 
   if (!['yes', 'no', 'unsure'].includes(payload.status)) throw new Error('Invalid bacon status.');
-  if (!payload.observed_date) throw new Error('Observation date is required.');
+  if (!isValidISODate(payload.observed_date)) throw new Error('Observation date is required.');
+  if (payload.observed_date > todayISO()) throw new Error('Observation date cannot be in the future.');
+  if (!['buffet', 'other'].includes(payload.breakfast_context)) throw new Error('Invalid breakfast setup.');
+  if ((note || '').length > REPORT_NOTE_LIMIT) throw new Error(`Note must be ${REPORT_NOTE_LIMIT} characters or fewer.`);
+  if (photoUrl && !REPORT_PHOTO_URL_PATTERN.test(photoUrl)) {
+    throw new Error('Photo upload returned an unexpected public URL. Check VITE_R2_PUBLIC_URL and the Supabase report policy.');
+  }
 
   const { data, error } = await client
     .from('bacon_reports')
@@ -181,6 +205,9 @@ export async function createReport(input) {
     .select()
     .single();
 
+  if (isRowLevelSecurityError(error)) {
+    throw new Error('Supabase blocked this report with row-level security. Run docs/fix-report-rls.sql in Supabase SQL Editor, then try again.');
+  }
   if (error) throw error;
   return data;
 }

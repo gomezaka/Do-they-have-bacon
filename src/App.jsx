@@ -46,6 +46,7 @@ const GEOLOCATION_OPTIONS = {
   timeout: 8000,
   maximumAge: 300000
 };
+const HOTEL_SEARCH_LIMIT = 6;
 
 function toUserLocation(position) {
   return {
@@ -102,6 +103,80 @@ function formatDistance(km) {
   if (km < 1) return `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m`;
   if (km < 10) return `${km.toFixed(1)} km`;
   return `${Math.round(km)} km`;
+}
+
+function firstValue(...values) {
+  return values.find((value) => String(value || '').trim()) || '';
+}
+
+function formatAddressLine(address = {}) {
+  const road = firstValue(address.road, address.pedestrian, address.footway, address.street);
+  const houseNumber = String(address.house_number || '').trim();
+  if (road && houseNumber) return `${road} ${houseNumber}`;
+  return firstValue(road, address.neighbourhood, address.suburb, address.city_district);
+}
+
+function placeCity(address = {}) {
+  return firstValue(address.city, address.town, address.village, address.municipality, address.county, address.state);
+}
+
+function placeName(place) {
+  const address = place.address || {};
+  return firstValue(
+    place.namedetails?.name,
+    place.namedetails?.['name:en'],
+    place.name,
+    address.hotel,
+    address.tourism,
+    address.amenity,
+    String(place.display_name || '').split(',')[0]
+  );
+}
+
+function toHotelPlace(place) {
+  const latitude = Number(place.lat);
+  const longitude = Number(place.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  const address = place.address || {};
+  const name = placeName(place);
+  if (!name) return null;
+
+  return {
+    id: String(place.place_id || `${latitude},${longitude}`),
+    name,
+    address: formatAddressLine(address),
+    city: placeCity(address),
+    country: firstValue(address.country),
+    latitude: Number(latitude.toFixed(6)),
+    longitude: Number(longitude.toFixed(6)),
+    displayName: place.display_name || [name, placeCity(address), address.country].filter(Boolean).join(', '),
+    type: firstValue(place.type, place.category, place.class)
+  };
+}
+
+async function searchHotelsOnMap(query) {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const params = new URLSearchParams({
+    q: trimmed,
+    format: 'jsonv2',
+    addressdetails: '1',
+    namedetails: '1',
+    extratags: '1',
+    dedupe: '1',
+    limit: String(HOTEL_SEARCH_LIMIT)
+  });
+
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+    headers: { Accept: 'application/json' }
+  });
+
+  if (!response.ok) throw new Error('Could not search the map.');
+
+  const data = await response.json();
+  return data.map(toHotelPlace).filter(Boolean);
 }
 
 function useHotels(refreshKey) {
@@ -474,8 +549,14 @@ function AddHotel({ hotels = [], go, refresh }) {
     country: '',
     address: '',
     latitude: 59.9139,
-    longitude: 10.7522
+    longitude: 10.7522,
+    source: 'manual'
   });
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [placeResults, setPlaceResults] = useState([]);
+  const [placeSearchStatus, setPlaceSearchStatus] = useState('idle');
+  const [placeMessage, setPlaceMessage] = useState('');
+  const [selectedPlaceId, setSelectedPlaceId] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [locationStatus, setLocationStatus] = useState('idle');
@@ -485,6 +566,53 @@ function AddHotel({ hotels = [], go, refresh }) {
   function update(key, value) {
     setDuplicateHotel(null);
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function searchForHotel() {
+    const query = placeQuery.trim();
+    if (query.length < 2) {
+      setPlaceResults([]);
+      setPlaceMessage('Type at least two characters to search the map.');
+      return;
+    }
+
+    setError('');
+    setPlaceSearchStatus('loading');
+    setPlaceMessage('Searching the map...');
+
+    try {
+      const results = await searchHotelsOnMap(query);
+      setPlaceResults(results);
+      setPlaceMessage(results.length ? `${results.length} map matches found.` : 'No map matches found.');
+    } catch (searchError) {
+      setPlaceResults([]);
+      setPlaceMessage('');
+      setError(searchError.message || 'Could not search the map right now.');
+    } finally {
+      setPlaceSearchStatus('idle');
+    }
+  }
+
+  function selectPlace(place) {
+    const nextForm = {
+      ...form,
+      name: place.name,
+      address: place.address,
+      city: place.city,
+      country: place.country,
+      latitude: place.latitude,
+      longitude: place.longitude,
+      source: 'osm'
+    };
+
+    setForm(nextForm);
+    setSelectedPlaceId(place.id);
+    setDuplicateHotel(findDuplicateHotel(hotels, nextForm));
+    setLocationStatus('ready');
+    setLocationMessage('Pin placed from the selected map result.');
+    setError(!nextForm.city || !nextForm.country
+      ? 'The map result is missing city or country. Add the missing detail below.'
+      : '');
   }
 
   useEffect(() => {
@@ -561,11 +689,65 @@ function AddHotel({ hotels = [], go, refresh }) {
       <ContextHeader title="Add hotel" onBack={() => go(screens.search)} />
       <div className="intro-card">
         <p className="hero-kicker">Uncharted breakfast territory</p>
-        <h2>Put this hotel on the bacon map.</h2>
-        <p className="hotel-meta">Create the hotel, place the pin, then submit the first scout report.</p>
+        <h2>Search for the hotel on the map.</h2>
+        <p className="hotel-meta">Choose the place, confirm the pin, then submit the first scout report.</p>
       </div>
 
       <form className="form" onSubmit={submit}>
+        <div className="hotel-lookup">
+          <label className="lookup-label" htmlFor="hotel-map-search">Find hotel</label>
+          <div className="search-pill hotel-lookup-row">
+            <span>⌕</span>
+            <input
+              id="hotel-map-search"
+              value={placeQuery}
+              onChange={(event) => setPlaceQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  searchForHotel();
+                }
+              }}
+              placeholder="Search hotel name or address"
+              autoComplete="off"
+            />
+            <button className="button secondary lookup-button" type="button" onClick={searchForHotel} disabled={placeSearchStatus === 'loading'}>
+              {placeSearchStatus === 'loading' ? '...' : 'Search'}
+            </button>
+          </div>
+
+          {placeMessage && <p className="results-label">{placeMessage}</p>}
+
+          {placeResults.length > 0 && (
+            <div className="place-results">
+              {placeResults.map((place) => (
+                <button
+                  className={selectedPlaceId === place.id ? 'place-result-card active' : 'place-result-card'}
+                  key={place.id}
+                  type="button"
+                  onClick={() => selectPlace(place)}
+                >
+                  <span className="place-result-icon">⌖</span>
+                  <span className="hotel-main">
+                    <span className="hotel-title">{place.name}</span>
+                    <span className="hotel-meta">{place.displayName}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {form.name && (
+          <div className="selected-place-card">
+            <span className="selected-place-mark">✓</span>
+            <span className="hotel-main">
+              <span className="hotel-title">{form.name}</span>
+              <span className="hotel-meta">{[form.address, form.city, form.country].filter(Boolean).join(', ')}</span>
+            </span>
+          </div>
+        )}
+
         <Field label="Hotel name *"><input className="input" value={form.name} onChange={(e) => update('name', e.target.value)} placeholder="Grand Hotel Breakfastland" /></Field>
         <div className="grid-2">
           <Field label="City *"><input className="input" value={form.city} onChange={(e) => update('city', e.target.value)} placeholder="Oslo" /></Field>
@@ -590,11 +772,18 @@ function AddHotel({ hotels = [], go, refresh }) {
         </div>
 
         <Suspense fallback={<MapLoading compact />}>
-          <LazyPinPicker lat={form.latitude} lng={form.longitude} onChange={(coords) => setForm((current) => ({ ...current, latitude: coords.lat, longitude: coords.lng }))} />
+          <LazyPinPicker
+            lat={form.latitude}
+            lng={form.longitude}
+            onChange={(coords) => {
+              setForm((current) => ({ ...current, latitude: coords.lat, longitude: coords.lng }));
+              setLocationMessage('Pin moved manually.');
+            }}
+          />
         </Suspense>
 
         {error && <p className="error">{error}</p>}
-        <button className="button submit-wide" disabled={saving}>{saving ? 'Saving...' : 'Create hotel and report bacon'}</button>
+        <button className="button submit-wide" disabled={saving}>{saving ? 'Saving...' : 'Add this hotel and report bacon'}</button>
       </form>
     </>
   );
@@ -665,6 +854,8 @@ function Report({ hotel, hotelId, go, refresh }) {
     );
   }
 
+  const today = todayISO();
+
   return (
     <>
       <ContextHeader title="Scout report" onBack={() => go(screens.detail, loadedHotel.id)} />
@@ -683,9 +874,9 @@ function Report({ hotel, hotelId, go, refresh }) {
 
         <Field label="When did you see this?">
           <div className="segmented">
-            <button className={observedDate === todayISO() ? 'segment active' : 'segment'} type="button" onClick={() => setObservedDate(todayISO())}>Today</button>
+            <button className={observedDate === today ? 'segment active' : 'segment'} type="button" onClick={() => setObservedDate(today)}>Today</button>
           </div>
-          <input className="input" type="date" value={observedDate} onChange={(e) => setObservedDate(e.target.value)} />
+          <input className="input" type="date" value={observedDate} max={today} onChange={(e) => setObservedDate(e.target.value)} />
         </Field>
 
         <Field label="Breakfast setup">

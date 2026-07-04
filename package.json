@@ -9,6 +9,7 @@
     "moderator:server": "node scripts/moderator-server.mjs",
     "coordinates:dry-run": "node scripts/fix-coordinates.mjs",
     "coordinates:fix": "node scripts/fix-coordinates.mjs --apply",
+    "coordinates:status": "node scripts/coordinate-status.mjs",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node scripts/check-source.mjs"
