@@ -40,6 +40,20 @@ create table if not exists public.report_flags (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.hotel_location_corrections (
+  id uuid primary key default gen_random_uuid(),
+  hotel_id uuid not null references public.hotels(id) on delete cascade,
+  current_latitude double precision not null,
+  current_longitude double precision not null,
+  suggested_latitude double precision not null,
+  suggested_longitude double precision not null,
+  note text,
+  status text not null default 'pending' check (status in ('pending', 'applied', 'rejected')),
+  anonymous_scout_id text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 -- Existing databases may already have these tables. `create table if not
 -- exists` will not add new columns, so keep this section idempotent.
 alter table public.hotels add column if not exists address text;
@@ -60,9 +74,19 @@ alter table public.bacon_reports add column if not exists updated_at timestamptz
 
 alter table public.report_flags add column if not exists anonymous_scout_id text;
 
+alter table public.hotel_location_corrections add column if not exists current_latitude double precision;
+alter table public.hotel_location_corrections add column if not exists current_longitude double precision;
+alter table public.hotel_location_corrections add column if not exists suggested_latitude double precision;
+alter table public.hotel_location_corrections add column if not exists suggested_longitude double precision;
+alter table public.hotel_location_corrections add column if not exists note text;
+alter table public.hotel_location_corrections add column if not exists status text not null default 'pending';
+alter table public.hotel_location_corrections add column if not exists anonymous_scout_id text;
+alter table public.hotel_location_corrections add column if not exists updated_at timestamptz not null default now();
+
 alter table public.hotels enable row level security;
 alter table public.bacon_reports enable row level security;
 alter table public.report_flags enable row level security;
+alter table public.hotel_location_corrections enable row level security;
 
 drop policy if exists "Public can read hotels" on public.hotels;
 create policy "Public can read hotels"
@@ -112,6 +136,19 @@ with check (
   and char_length(reason) <= 80
 );
 
+drop policy if exists "Anyone can suggest hotel location corrections" on public.hotel_location_corrections;
+create policy "Anyone can suggest hotel location corrections"
+on public.hotel_location_corrections for insert
+with check (
+  hotel_id is not null
+  and status = 'pending'
+  and current_latitude between -90 and 90
+  and suggested_latitude between -90 and 90
+  and current_longitude between -180 and 180
+  and suggested_longitude between -180 and 180
+  and char_length(coalesce(note, '')) <= 280
+);
+
 create or replace function public.increment_report_flag_count()
 returns trigger
 language plpgsql
@@ -137,3 +174,5 @@ execute function public.increment_report_flag_count();
 create index if not exists hotels_city_country_idx on public.hotels(city, country);
 create index if not exists bacon_reports_hotel_id_idx on public.bacon_reports(hotel_id);
 create index if not exists bacon_reports_observed_date_idx on public.bacon_reports(observed_date desc);
+create index if not exists hotel_location_corrections_hotel_id_idx on public.hotel_location_corrections(hotel_id);
+create index if not exists hotel_location_corrections_status_idx on public.hotel_location_corrections(status, created_at desc);

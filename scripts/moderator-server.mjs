@@ -71,6 +71,18 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { hotel });
     }
 
+    const correctionApplyMatch = path.match(/^\/api\/location-corrections\/([^/]+)\/apply$/);
+    if (req.method === 'POST' && correctionApplyMatch) {
+      const result = await applyLocationCorrection(decodeURIComponent(correctionApplyMatch[1]));
+      return sendJson(res, 200, result);
+    }
+
+    const correctionRejectMatch = path.match(/^\/api\/location-corrections\/([^/]+)\/reject$/);
+    if (req.method === 'POST' && correctionRejectMatch) {
+      const correction = await updateLocationCorrectionStatus(decodeURIComponent(correctionRejectMatch[1]), 'rejected');
+      return sendJson(res, 200, { correction });
+    }
+
     sendJson(res, 404, { error: 'Not found.' });
   } catch (error) {
     sendJson(res, 500, { error: error.message || 'Moderator server failed.' });
@@ -154,6 +166,16 @@ async function listHotels(searchParams) {
           status,
           observed_date,
           created_at
+        ),
+        hotel_location_corrections (
+          id,
+          current_latitude,
+          current_longitude,
+          suggested_latitude,
+          suggested_longitude,
+          note,
+          status,
+          created_at
         )
       `)
       .is('merged_into_hotel_id', null)
@@ -175,6 +197,20 @@ async function listHotels(searchParams) {
 
 function normalizeHotel(row) {
   const reports = row.bacon_reports || [];
+  const locationCorrections = (row.hotel_location_corrections || [])
+    .filter((correction) => correction.status === 'pending')
+    .map((correction) => ({
+      id: correction.id,
+      current_latitude: Number(correction.current_latitude),
+      current_longitude: Number(correction.current_longitude),
+      suggested_latitude: Number(correction.suggested_latitude),
+      suggested_longitude: Number(correction.suggested_longitude),
+      note: correction.note || '',
+      status: correction.status || 'pending',
+      created_at: correction.created_at
+    }))
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+
   return {
     id: row.id,
     name: row.name,
@@ -189,7 +225,8 @@ function normalizeHotel(row) {
     report_count: reports.length,
     yes_count: reports.filter((report) => report.status === 'yes').length,
     no_count: reports.filter((report) => report.status === 'no').length,
-    unsure_count: reports.filter((report) => report.status === 'unsure').length
+    unsure_count: reports.filter((report) => report.status === 'unsure').length,
+    location_corrections: locationCorrections
   };
 }
 
@@ -214,6 +251,40 @@ async function updateHotelStatus(hotelId, status) {
     .update({ verification_status: status, updated_at: new Date().toISOString() })
     .eq('id', requireHotelId(hotelId))
     .select('id, verification_status, updated_at')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function applyLocationCorrection(correctionId) {
+  const correction = await getLocationCorrection(correctionId);
+  const hotel = await updateHotelLocation(correction.hotel_id, {
+    latitude: correction.suggested_latitude,
+    longitude: correction.suggested_longitude
+  });
+  await updateLocationCorrectionStatus(correction.id, 'applied');
+  return { hotel, correction: { ...correction, status: 'applied' } };
+}
+
+async function getLocationCorrection(correctionId) {
+  const { data, error } = await supabase
+    .from('hotel_location_corrections')
+    .select('id, hotel_id, suggested_latitude, suggested_longitude, status')
+    .eq('id', String(correctionId || '').trim())
+    .single();
+
+  if (error) throw error;
+  if (!data) throw new Error('Location correction was not found.');
+  return data;
+}
+
+async function updateLocationCorrectionStatus(correctionId, status) {
+  const { data, error } = await supabase
+    .from('hotel_location_corrections')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('id', String(correctionId || '').trim())
+    .select('id, status')
     .single();
 
   if (error) throw error;
@@ -461,6 +532,26 @@ const MODERATOR_HTML = String.raw`<!doctype html>
 
       .pill.hidden { color: var(--danger); }
 
+      .correction-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .correction-list h3 { margin: 0; }
+
+      .correction-card {
+        display: grid;
+        gap: 7px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-soft);
+        padding: 12px;
+      }
+
+      .correction-card p { margin: 0; }
+      .correction-actions { justify-content: flex-start; }
+
       .actions {
         display: flex;
         align-items: flex-start;
@@ -666,6 +757,7 @@ const MODERATOR_HTML = String.raw`<!doctype html>
             + '<span class="hotel-name">' + escapeHtml(hotel.name) + '</span>'
             + '<span class="hotel-meta">' + escapeHtml([hotel.city, hotel.country].filter(Boolean).join(', ')) + '</span>'
             + '<span class="hotel-meta">' + hotel.report_count + ' rapporter &middot; ' + escapeHtml(hotel.verification_status) + '</span>'
+            + (hotel.location_corrections.length ? '<span class="hotel-meta">' + hotel.location_corrections.length + ' posisjonsforslag</span>' : '')
             + '</button>';
         }).join('');
 
@@ -697,6 +789,22 @@ const MODERATOR_HTML = String.raw`<!doctype html>
         const visibilityButton = hotel.verification_status === 'hidden'
           ? '<button id="restoreHotel" class="button secondary">Gjenopprett</button>'
           : '<button id="hideHotel" class="button danger">Skjul hotell</button>';
+        const correctionHtml = hotel.location_corrections.length
+          ? '<div class="correction-list"><h3>Posisjonsforslag</h3>'
+            + hotel.location_corrections.map((correction) => (
+              '<article class="correction-card">'
+              + '<p class="hotel-meta">Nå: ' + formatCoordinate(correction.current_latitude) + ', ' + formatCoordinate(correction.current_longitude) + '</p>'
+              + '<p class="hotel-meta">Forslag: ' + formatCoordinate(correction.suggested_latitude) + ', ' + formatCoordinate(correction.suggested_longitude) + '</p>'
+              + (correction.note ? '<p>' + escapeHtml(correction.note) + '</p>' : '')
+              + '<div class="actions correction-actions">'
+              + '<button class="button secondary" data-correction-preview="' + escapeHtml(correction.id) + '">Vis pin</button>'
+              + '<button class="button" data-correction-apply="' + escapeHtml(correction.id) + '">Bruk forslag</button>'
+              + '<button class="button secondary" data-correction-reject="' + escapeHtml(correction.id) + '">Avvis</button>'
+              + '</div>'
+              + '</article>'
+            )).join('')
+            + '</div>'
+          : '';
 
         elements.detail.innerHTML = '<div>'
           + '<h2>' + escapeHtml(hotel.name) + '</h2>'
@@ -708,6 +816,7 @@ const MODERATOR_HTML = String.raw`<!doctype html>
           + '<span class="pill">' + hotel.no_count + ' nei</span>'
           + '<span class="pill">' + hotel.unsure_count + ' usikker</span>'
           + '</div>'
+          + correctionHtml
           + '</div>'
           + '<div class="actions">'
           + visibilityButton
@@ -717,6 +826,15 @@ const MODERATOR_HTML = String.raw`<!doctype html>
         const restoreButton = document.querySelector('#restoreHotel');
         if (hideButton) hideButton.addEventListener('click', hideHotel);
         if (restoreButton) restoreButton.addEventListener('click', restoreHotel);
+        for (const button of elements.detail.querySelectorAll('[data-correction-preview]')) {
+          button.addEventListener('click', () => previewLocationCorrection(button.dataset.correctionPreview));
+        }
+        for (const button of elements.detail.querySelectorAll('[data-correction-apply]')) {
+          button.addEventListener('click', () => applyLocationCorrection(button.dataset.correctionApply));
+        }
+        for (const button of elements.detail.querySelectorAll('[data-correction-reject]')) {
+          button.addEventListener('click', () => rejectLocationCorrection(button.dataset.correctionReject));
+        }
 
         setDraftPosition(hotel.latitude, hotel.longitude, false);
         state.map.setView([hotel.latitude, hotel.longitude], 15);
@@ -823,6 +941,67 @@ const MODERATOR_HTML = String.raw`<!doctype html>
         setStatus(action === 'hide' ? 'Hotell skjult' : 'Hotell gjenopprettet', 'ok');
       }
 
+      function previewLocationCorrection(correctionId) {
+        const hotel = selectedHotel();
+        const correction = hotel?.location_corrections.find((item) => item.id === correctionId);
+        if (!correction) return;
+        setDraftPosition(correction.suggested_latitude, correction.suggested_longitude, true);
+        state.map.setView([correction.suggested_latitude, correction.suggested_longitude], 17);
+        setStatus('Viser foreslatt posisjon. Lagre manuelt eller bruk forslaget.');
+      }
+
+      async function applyLocationCorrection(correctionId) {
+        const hotel = selectedHotel();
+        const correction = hotel?.location_corrections.find((item) => item.id === correctionId);
+        if (!hotel || !correction) return;
+        if (!confirm('Flytt ' + hotel.name + ' til foreslatt posisjon?')) return;
+
+        state.saving = true;
+        elements.saveLocation.disabled = true;
+        setStatus('Bruker posisjonsforslag...');
+
+        try {
+          const response = await fetch('/api/location-corrections/' + encodeURIComponent(correctionId) + '/apply', { method: 'POST' });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Kunne ikke bruke posisjonsforslaget.');
+
+          hotel.latitude = Number(payload.hotel.latitude);
+          hotel.longitude = Number(payload.hotel.longitude);
+          hotel.location_corrections = hotel.location_corrections.filter((item) => item.id !== correctionId);
+          renderList();
+          renderDetail();
+          setStatus('Posisjonsforslag brukt', 'ok');
+        } catch (error) {
+          setStatus(error.message, 'error');
+        } finally {
+          state.saving = false;
+          elements.saveLocation.disabled = false;
+        }
+      }
+
+      async function rejectLocationCorrection(correctionId) {
+        const hotel = selectedHotel();
+        if (!hotel) return;
+
+        state.saving = true;
+        setStatus('Avviser posisjonsforslag...');
+
+        try {
+          const response = await fetch('/api/location-corrections/' + encodeURIComponent(correctionId) + '/reject', { method: 'POST' });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Kunne ikke avvise posisjonsforslaget.');
+
+          hotel.location_corrections = hotel.location_corrections.filter((item) => item.id !== correctionId);
+          renderList();
+          renderDetail();
+          setStatus('Posisjonsforslag avvist', 'ok');
+        } catch (error) {
+          setStatus(error.message, 'error');
+        } finally {
+          state.saving = false;
+        }
+      }
+
       function selectedHotel() {
         return state.hotels.find((hotel) => hotel.id === state.selectedId) || null;
       }
@@ -834,6 +1013,11 @@ const MODERATOR_HTML = String.raw`<!doctype html>
 
       function normalize(value) {
         return String(value || '').trim().toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+      }
+
+      function formatCoordinate(value) {
+        const coordinate = Number(value);
+        return Number.isFinite(coordinate) ? coordinate.toFixed(6) : '';
       }
 
       function escapeHtml(value) {

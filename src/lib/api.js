@@ -46,6 +46,18 @@ function isRowLevelSecurityError(error) {
   return error?.code === '42501' && /row-level security/i.test(error.message || '');
 }
 
+function isMissingTableError(error) {
+  return error?.code === '42P01';
+}
+
+function requireCoordinate(value, label, min, max) {
+  const coordinate = Number(value);
+  if (!Number.isFinite(coordinate) || coordinate < min || coordinate > max) {
+    throw new Error(`${label} must be a valid coordinate.`);
+  }
+  return Number(coordinate.toFixed(6));
+}
+
 function normalizeHotel(row, reports = []) {
   return {
     id: row.id,
@@ -210,4 +222,35 @@ export async function createReport(input) {
   }
   if (error) throw error;
   return data;
+}
+
+export async function createLocationCorrection(input) {
+  const client = requireSupabase();
+  const note = input.note?.trim() || null;
+  const payload = {
+    hotel_id: input.hotelId,
+    current_latitude: requireCoordinate(input.currentLatitude, 'Current latitude', -90, 90),
+    current_longitude: requireCoordinate(input.currentLongitude, 'Current longitude', -180, 180),
+    suggested_latitude: requireCoordinate(input.suggestedLatitude, 'Suggested latitude', -90, 90),
+    suggested_longitude: requireCoordinate(input.suggestedLongitude, 'Suggested longitude', -180, 180),
+    note,
+    status: 'pending',
+    anonymous_scout_id: getScoutId()
+  };
+
+  if (!payload.hotel_id) throw new Error('Hotel is required.');
+  if ((note || '').length > 280) throw new Error('Note must be 280 characters or fewer.');
+
+  const { error } = await client
+    .from('hotel_location_corrections')
+    .insert(payload);
+
+  if (isRowLevelSecurityError(error)) {
+    throw new Error('Supabase blocked this location suggestion. Run docs/fix-location-corrections.sql in Supabase SQL Editor, then try again.');
+  }
+  if (isMissingTableError(error)) {
+    throw new Error('Location suggestions are not set up yet. Run docs/fix-location-corrections.sql in Supabase SQL Editor, then try again.');
+  }
+  if (error) throw error;
+  return true;
 }

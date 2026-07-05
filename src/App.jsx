@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createHotel,
+  createLocationCorrection,
   createReport,
   filterHotels,
   getHotelWithReports,
@@ -20,6 +21,7 @@ const screens = {
   search: 'search',
   add: 'add',
   report: 'report',
+  location: 'location',
   detail: 'detail',
   map: 'map',
   you: 'you'
@@ -298,6 +300,7 @@ function App() {
           {screen === screens.search && <Search hotels={hotels} error={error} loading={loading} go={go} />}
           {screen === screens.add && <AddHotel hotels={hotels} go={go} refresh={refresh} initialPlace={pendingHotelPlace} />}
           {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} rememberHotel={rememberHotel} />}
+          {screen === screens.location && <LocationCorrection hotel={selectedHotel} hotelId={selectedHotelId} go={go} />}
           {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} rememberHotel={rememberHotel} />}
           {screen === screens.map && (
             <Suspense fallback={<MapLoading />}>
@@ -1035,6 +1038,146 @@ function Choice({ active, emoji, title, text, onClick }) {
   );
 }
 
+function LocationCorrection({ hotel, hotelId, go }) {
+  const [loadedHotel, setLoadedHotel] = useState(hotel);
+  const [coords, setCoords] = useState({
+    latitude: Number(hotel?.latitude) || DEFAULT_HOTEL_FORM.latitude,
+    longitude: Number(hotel?.longitude) || DEFAULT_HOTEL_FORM.longitude
+  });
+  const [note, setNote] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [locationStatus, setLocationStatus] = useState('idle');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (loadedHotel || !hotelId) return;
+    getHotelWithReports(hotelId).then(setLoadedHotel).catch(() => {});
+  }, [hotelId, loadedHotel]);
+
+  useEffect(() => {
+    if (!loadedHotel || dirty) return;
+    setCoords({
+      latitude: Number(loadedHotel.latitude),
+      longitude: Number(loadedHotel.longitude)
+    });
+  }, [dirty, loadedHotel]);
+
+  async function useMyLocation() {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not available on this device.');
+      return;
+    }
+
+    setError('');
+    setLocationStatus('loading');
+    try {
+      const location = await getCurrentLocation();
+      setCoords({ latitude: location.latitude, longitude: location.longitude });
+      setDirty(true);
+      setLocationStatus('ready');
+    } catch (locationError) {
+      setLocationStatus('error');
+      setError(locationError.code === 1
+        ? 'Location permission was not allowed.'
+        : 'Could not get your location.');
+    }
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!loadedHotel) return;
+
+    setSaving(true);
+    setError('');
+
+    try {
+      await createLocationCorrection({
+        hotelId: loadedHotel.id,
+        currentLatitude: loadedHotel.latitude,
+        currentLongitude: loadedHotel.longitude,
+        suggestedLatitude: coords.latitude,
+        suggestedLongitude: coords.longitude,
+        note
+      });
+      setSubmitted(true);
+    } catch (error) {
+      setError(error.message || 'Could not submit location suggestion.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!loadedHotel) {
+    return (
+      <>
+        <ContextHeader title="Hotel location" onBack={() => go(screens.search)} />
+        <div className="notice">Loading hotel...</div>
+      </>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <>
+        <ContextHeader title="Hotel location" onBack={() => go(screens.detail, loadedHotel.id)} />
+        <div className="intro-card">
+          <p className="hero-kicker">Location suggestion</p>
+          <h2>Thanks, this is queued for review.</h2>
+          <p className="hotel-meta">A moderator can compare the old pin with your suggested pin before moving {loadedHotel.name}.</p>
+        </div>
+        <button className="button submit-wide" onClick={() => go(screens.detail, loadedHotel.id)}>Back to hotel</button>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <ContextHeader title="Hotel location" onBack={() => go(screens.detail, loadedHotel.id)} />
+      <form className="form" onSubmit={submit}>
+        <div className="intro-card">
+          <p className="hero-kicker">Wrong map pin?</p>
+          <h2>Suggest the correct location.</h2>
+          <p className="hotel-meta">Move the pin for <strong>{loadedHotel.name}</strong>. We keep this as a review suggestion before changing the public map.</p>
+        </div>
+
+        <div className="notice">
+          <strong>Move the correction pin</strong>
+          <p className="muted small">Tap the map where the hotel should be. Use your location only if you are standing at the hotel.</p>
+          <button className="button secondary" type="button" onClick={useMyLocation} disabled={locationStatus === 'loading'}>
+            {locationStatus === 'loading' ? 'Locating...' : 'Use my location'}
+          </button>
+        </div>
+
+        <Suspense fallback={<MapLoading compact />}>
+          <LazyPinPicker
+            lat={coords.latitude}
+            lng={coords.longitude}
+            onChange={(nextCoords) => {
+              setCoords({ latitude: nextCoords.lat, longitude: nextCoords.lng });
+              setDirty(true);
+            }}
+          />
+        </Suspense>
+
+        <div className="coordinate-note">
+          <span>Current: {Number(loadedHotel.latitude).toFixed(5)}, {Number(loadedHotel.longitude).toFixed(5)}</span>
+          <span>Suggested: {Number(coords.latitude).toFixed(5)}, {Number(coords.longitude).toFixed(5)}</span>
+        </div>
+
+        <Field label="Note for moderator (optional)">
+          <textarea className="textarea" value={note} maxLength={280} onChange={(event) => setNote(event.target.value)} placeholder="Example: The hotel is on the other side of Wembley Stadium." />
+          <p className="muted small">{note.length}/280</p>
+        </Field>
+
+        {error && <p className="error">{error}</p>}
+        <button className="button submit-wide" disabled={saving}>{saving ? 'Submitting...' : 'Submit location suggestion'}</button>
+      </form>
+    </>
+  );
+}
+
 function HotelDetail({ hotel, hotelId, go, rememberHotel }) {
   const [loadedHotel, setLoadedHotel] = useState(hotel);
 
@@ -1101,6 +1244,7 @@ function HotelDetail({ hotel, hotelId, go, rememberHotel }) {
       <div className="actions detail-actions">
         <button className="button" onClick={() => go(screens.report, loadedHotel.id)}>Report bacon here</button>
         <button className="button secondary" onClick={() => go(screens.map)}>View on map</button>
+        <button className="button secondary" onClick={() => go(screens.location, loadedHotel.id)}>Report wrong location</button>
       </div>
 
       <div className="section-row">
