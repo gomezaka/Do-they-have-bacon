@@ -22,6 +22,7 @@ const screens = {
   add: 'add',
   report: 'report',
   location: 'location',
+  moderation: 'moderation',
   detail: 'detail',
   map: 'map',
   you: 'you'
@@ -49,6 +50,7 @@ const GEOLOCATION_OPTIONS = {
   maximumAge: 300000
 };
 const HOTEL_SEARCH_LIMIT = 6;
+const MODERATOR_TOKEN_KEY = 'dthb.moderatorToken.v1';
 const DEFAULT_HOTEL_FORM = {
   name: '',
   city: '',
@@ -211,6 +213,20 @@ async function searchHotelsOnMap(query) {
   return data.map(toHotelPlace).filter(Boolean);
 }
 
+async function moderationRequest(token, action, payload = {}) {
+  const response = await fetch('/.netlify/functions/moderation', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Moderator-Token': token
+    },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Could not reach moderation.');
+  return data;
+}
+
 function useHotels(refreshKey) {
   const [hotels, setHotels] = useState([]);
   const [error, setError] = useState('');
@@ -301,6 +317,7 @@ function App() {
           {screen === screens.add && <AddHotel hotels={hotels} go={go} refresh={refresh} initialPlace={pendingHotelPlace} />}
           {screen === screens.report && <Report hotel={selectedHotel} hotelId={selectedHotelId} go={go} refresh={refresh} rememberHotel={rememberHotel} />}
           {screen === screens.location && <LocationCorrection hotel={selectedHotel} hotelId={selectedHotelId} go={go} />}
+          {screen === screens.moderation && <Moderation go={go} />}
           {screen === screens.detail && <HotelDetail hotel={selectedHotel} hotelId={selectedHotelId} go={go} rememberHotel={rememberHotel} />}
           {screen === screens.map && (
             <Suspense fallback={<MapLoading />}>
@@ -1049,6 +1066,10 @@ function LocationCorrection({ hotel, hotelId, go }) {
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [locationStatus, setLocationStatus] = useState('idle');
+  const [locationQuery, setLocationQuery] = useState(hotel?.name || '');
+  const [locationResults, setLocationResults] = useState([]);
+  const [locationSearchStatus, setLocationSearchStatus] = useState('idle');
+  const [locationMessage, setLocationMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -1083,6 +1104,39 @@ function LocationCorrection({ hotel, hotelId, go }) {
         ? 'Location permission was not allowed.'
         : 'Could not get your location.');
     }
+  }
+
+  async function searchLocation() {
+    const query = locationQuery.trim();
+    if (query.length < 2) {
+      setLocationResults([]);
+      setLocationMessage('Type at least two characters to search the map.');
+      return;
+    }
+
+    setError('');
+    setLocationSearchStatus('loading');
+    setLocationMessage('Searching the map...');
+
+    try {
+      const results = await searchHotelsOnMap(query);
+      setLocationResults(results);
+      setLocationMessage(results.length ? `${results.length} map matches found.` : 'No map matches found.');
+    } catch (searchError) {
+      setLocationResults([]);
+      setLocationMessage('');
+      setError(searchError.message || 'Could not search the map right now.');
+    } finally {
+      setLocationSearchStatus('idle');
+    }
+  }
+
+  function selectLocationResult(place) {
+    setCoords({ latitude: place.latitude, longitude: place.longitude });
+    setDirty(true);
+    setLocationQuery(place.name);
+    setLocationResults([place]);
+    setLocationMessage('Correction pin moved to the selected map result.');
   }
 
   async function submit(event) {
@@ -1142,9 +1196,53 @@ function LocationCorrection({ hotel, hotelId, go }) {
           <p className="hotel-meta">Move the pin for <strong>{loadedHotel.name}</strong>. We keep this as a review suggestion before changing the public map.</p>
         </div>
 
+        <div className="hotel-lookup">
+          <label className="lookup-label" htmlFor="location-map-search">Search correct location</label>
+          <div className="search-pill hotel-lookup-row">
+            <span>⌕</span>
+            <input
+              id="location-map-search"
+              value={locationQuery}
+              onChange={(event) => setLocationQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  searchLocation();
+                }
+              }}
+              placeholder="Search hotel name or address"
+              autoComplete="off"
+            />
+            <button className="button secondary lookup-button" type="button" onClick={searchLocation} disabled={locationSearchStatus === 'loading'}>
+              {locationSearchStatus === 'loading' ? '...' : 'Search'}
+            </button>
+          </div>
+
+          {locationMessage && <p className="results-label">{locationMessage}</p>}
+
+          {locationResults.length > 0 && (
+            <div className="place-results">
+              {locationResults.map((place) => (
+                <button
+                  className="place-result-card"
+                  key={place.id}
+                  type="button"
+                  onClick={() => selectLocationResult(place)}
+                >
+                  <span className="place-result-icon">⌖</span>
+                  <span className="hotel-main">
+                    <span className="hotel-title">{place.name}</span>
+                    <span className="hotel-meta">{place.displayName}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="notice">
           <strong>Move the correction pin</strong>
-          <p className="muted small">Tap the map where the hotel should be. Use your location only if you are standing at the hotel.</p>
+          <p className="muted small">Search first, or tap the map where the hotel should be. Use your location only if you are standing at the hotel.</p>
           <button className="button secondary" type="button" onClick={useMyLocation} disabled={locationStatus === 'loading'}>
             {locationStatus === 'loading' ? 'Locating...' : 'Use my location'}
           </button>
@@ -1271,6 +1369,114 @@ function HotelDetail({ hotel, hotelId, go, rememberHotel }) {
   );
 }
 
+function Moderation({ go }) {
+  const [token, setToken] = useState(() => {
+    try {
+      return localStorage.getItem(MODERATOR_TOKEN_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [corrections, setCorrections] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [savingId, setSavingId] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  async function loadCorrections(event) {
+    event?.preventDefault();
+    const trimmedToken = token.trim();
+    if (!trimmedToken) {
+      setError('Enter moderator token.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('Loading location suggestions...');
+
+    try {
+      const data = await moderationRequest(trimmedToken, 'listLocationCorrections');
+      setCorrections(data.corrections || []);
+      setMessage(data.corrections?.length ? `${data.corrections.length} suggestions waiting.` : 'No pending location suggestions.');
+      try {
+        localStorage.setItem(MODERATOR_TOKEN_KEY, trimmedToken);
+      } catch {}
+    } catch (loadError) {
+      setCorrections([]);
+      setMessage('');
+      setError(loadError.message || 'Could not load moderation queue.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resolveCorrection(correctionId, action) {
+    const trimmedToken = token.trim();
+    if (!trimmedToken) return;
+
+    setSavingId(correctionId);
+    setError('');
+    setMessage(action === 'applyLocationCorrection' ? 'Applying location...' : 'Rejecting suggestion...');
+
+    try {
+      await moderationRequest(trimmedToken, action, { correctionId });
+      setCorrections((current) => current.filter((correction) => correction.id !== correctionId));
+      setMessage(action === 'applyLocationCorrection' ? 'Location updated.' : 'Suggestion rejected.');
+    } catch (resolveError) {
+      setError(resolveError.message || 'Could not update suggestion.');
+      setMessage('');
+    } finally {
+      setSavingId('');
+    }
+  }
+
+  return (
+    <>
+      <ContextHeader title="Moderation" onBack={() => go(screens.you)} />
+      <div className="intro-card">
+        <p className="hero-kicker">Moderator</p>
+        <h2>Approve map corrections.</h2>
+        <p className="hotel-meta">Use your private moderator token. Approving a suggestion moves the public hotel pin.</p>
+      </div>
+
+      <form className="form" onSubmit={loadCorrections}>
+        <Field label="Moderator token">
+          <input className="input" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Private token" autoComplete="current-password" />
+        </Field>
+        <button className="button submit-wide" disabled={loading}>{loading ? 'Loading...' : 'Load suggestions'}</button>
+      </form>
+
+      {message && <p className="results-label">{message}</p>}
+      {error && <p className="error">{error}</p>}
+
+      <div className="tight-stack moderation-list">
+        {corrections.map((correction) => (
+          <article className="card moderation-card" key={correction.id}>
+            <div>
+              <h3>{correction.hotel.name}</h3>
+              <p className="hotel-meta">{[correction.hotel.address, correction.hotel.city, correction.hotel.country].filter(Boolean).join(', ')}</p>
+            </div>
+            <div className="coordinate-note">
+              <span>Current: {correction.currentLatitude.toFixed(5)}, {correction.currentLongitude.toFixed(5)}</span>
+              <span>Suggested: {correction.suggestedLatitude.toFixed(5)}, {correction.suggestedLongitude.toFixed(5)}</span>
+            </div>
+            {correction.note && <p>{correction.note}</p>}
+            <div className="actions moderation-actions">
+              <button className="button secondary" type="button" onClick={() => go(screens.detail, correction.hotel.id)}>Open hotel</button>
+              <a className="button secondary" href={`https://www.openstreetmap.org/?mlat=${correction.suggestedLatitude}&mlon=${correction.suggestedLongitude}#map=18/${correction.suggestedLatitude}/${correction.suggestedLongitude}`} target="_blank" rel="noreferrer">Map</a>
+              <button className="button" type="button" disabled={savingId === correction.id} onClick={() => resolveCorrection(correction.id, 'applyLocationCorrection')}>
+                {savingId === correction.id ? 'Saving...' : 'Approve'}
+              </button>
+              <button className="button secondary" type="button" disabled={savingId === correction.id} onClick={() => resolveCorrection(correction.id, 'rejectLocationCorrection')}>Reject</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function You({ go }) {
   return (
     <>
@@ -1303,6 +1509,11 @@ function You({ go }) {
         <button className="add-manual-card" onClick={() => go(screens.map)}>
           <span className="add-manual-icon">⌖</span>
           <span><strong>Open bacon map</strong><br /><span className="muted small">See where scouts have already found evidence.</span></span>
+        </button>
+
+        <button className="add-manual-card" onClick={() => go(screens.moderation)}>
+          <span className="add-manual-icon">OK</span>
+          <span><strong>Moderate corrections</strong><br /><span className="muted small">Approve or reject suggested hotel locations.</span></span>
         </button>
       </div>
     </>

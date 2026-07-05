@@ -111,6 +111,8 @@ VITE_APP_URL=http://localhost:5173
 VITE_SUPABASE_URL=https://qivsimkychjsknuhhfff.supabase.co
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+MODERATOR_TOKEN=your_long_private_moderator_token
+MODERATION_ALLOWED_ORIGINS=http://localhost:5173
 
 VITE_R2_PUBLIC_URL=https://pub-2e03acbe4ae14fbea6b571d7cd8425cb.r2.dev
 
@@ -121,8 +123,10 @@ R2_SECRET_ACCESS_KEY=your_r2_secret_key
 R2_BUCKET_NAME=do-they-have-bacon
 ```
 
-`VITE_` variables are visible in the frontend. R2 secret values are used only by the Netlify Function.
+`VITE_` variables are visible in the frontend. R2 and moderation secret values are used only by Netlify Functions.
 Do not add a Supabase service role key to this app; the frontend only needs the anon/publishable key and RLS policies.
+
+For in-app moderation, add `SUPABASE_SERVICE_ROLE_KEY` and `MODERATOR_TOKEN` in Netlify environment variables. Open the app, go to `You -> Moderate corrections`, and enter the token to approve or reject suggested hotel locations.
 
 ## Supabase
 
